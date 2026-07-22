@@ -10,12 +10,6 @@ let unsubscribeSshOutput = null;
 let unsubscribeSshState = null;
 
 // DOM Elements
-const cfgLinuxUser = document.getElementById('cfg-linux-user');
-const cfgLinuxPass = document.getElementById('cfg-linux-pass');
-const cfgMacUser = document.getElementById('cfg-mac-user');
-const cfgMacPass = document.getElementById('cfg-mac-pass');
-const cfgWindowsUser = document.getElementById('cfg-windows-user');
-const cfgWindowsPass = document.getElementById('cfg-windows-pass');
 const githubTokenPill = document.getElementById('github-token-pill');
 
 const btnScan = document.getElementById('btn-scan');
@@ -32,26 +26,30 @@ const statSsh = document.getElementById('stat-ssh');
 const devicesCount = document.getElementById('devices-count');
 const devicesList = document.getElementById('devices-list');
 
-const terminalPanel = document.getElementById('terminal-panel');
-const welcomePanel = document.getElementById('welcome-panel');
-const termHostTitle = document.getElementById('term-host-title');
-const termHostSub = document.getElementById('term-host-sub');
-const connectionSetup = document.getElementById('connection-setup');
-const terminalBody = document.getElementById('terminal-body');
+// Persistent SSH terminal drawer (outside tab system)
+const sshTerminalDrawer = document.getElementById('ssh-terminal-drawer');
+const terminalPanel    = sshTerminalDrawer; // alias for legacy code
+const welcomePanel     = null;              // removed — no longer needed
+const termHostTitle    = document.getElementById('term-host-title');
+const termHostSub      = document.getElementById('term-host-sub');
+const connectionSetup  = document.getElementById('connection-setup');
+const terminalBody     = document.getElementById('terminal-body');
 const terminalContainer = document.getElementById('terminal-container');
-const btnLaunchSsh = document.getElementById('btn-launch-ssh');
-const sshUserInput = document.getElementById('ssh-user-input');
-const sshPassInput = document.getElementById('ssh-pass-input');
+const btnLaunchSsh     = document.getElementById('btn-launch-ssh');
+const sshUserInput     = document.getElementById('ssh-user-input');
+const sshPassInput     = document.getElementById('ssh-pass-input');
 const btnDisconnectTerm = document.getElementById('btn-disconnect-term');
-const btnClearTerm = document.getElementById('btn-clear-term');
+const btnClearTerm     = document.getElementById('btn-clear-term');
 
-const connStatusDot = document.querySelector('.connection-status-dot');
+const connStatusDot = document.getElementById('conn-status-dot-drawer');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   await loadAppConfig();
   setupScanHandlers();
+  setupSidebarScanBtn();
   setupTerminalWorkspaceHandlers();
+  setupSshDrawerResize();
   setupCollapsibleHandlers();
   setupTabHandlers();
   setupUninstallerHandler();
@@ -61,6 +59,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTerminalMaximizeHandler();
   setupRemoteDesktopSessionHandler();
   setupRdSidebarScraper();
+
+  // Auto-scan on first launch
+  setTimeout(() => {
+    const scanBtn = document.getElementById('btn-scan-sidebar');
+    if (scanBtn && !scanBtn.disabled) scanBtn.click();
+  }, 800);
 });
 
 // Load configuration
@@ -279,14 +283,12 @@ function connectDeviceInstantly(device) {
 
   currentTargetDevice = device;
 
-  // Toggle visible workspace panels
-  welcomePanel.style.display = 'none';
-  terminalPanel.style.display = 'flex';
-
-  // Auto-collapse radar panel to maximize terminal workspace height
-  const radarPanel = document.getElementById('radar-panel');
-  if (radarPanel) {
-    radarPanel.classList.add('collapsed');
+  // Show persistent SSH terminal drawer at bottom
+  if (sshTerminalDrawer) {
+    sshTerminalDrawer.style.display = 'flex';
+    // Add bottom padding to main so content isn't hidden under drawer
+    const main = document.querySelector('.main-content');
+    if (main) main.style.paddingBottom = (sshTerminalDrawer.offsetHeight || 320) + 'px';
   }
 
   termHostTitle.textContent = `Remote Control Session: ${device.name}`;
@@ -430,16 +432,12 @@ function setupTerminalWorkspaceHandlers() {
     window.api.sshDisconnect();
     destroyTerminalInstance();
     sshConnected = false;
+    currentTargetDevice = null;
 
-    // Hide terminal and show welcome screen
-    terminalPanel.style.display = 'none';
-    welcomePanel.style.display = 'flex';
-
-    // Auto-expand radar panel back to standard layout
-    const radarPanel = document.getElementById('radar-panel');
-    if (radarPanel) {
-      radarPanel.classList.remove('collapsed');
-    }
+    // Hide the persistent drawer
+    if (sshTerminalDrawer) sshTerminalDrawer.style.display = 'none';
+    const main = document.querySelector('.main-content');
+    if (main) main.style.paddingBottom = '';
 
     // Deselect list items
     document.querySelectorAll('.device-list-item').forEach(item => item.classList.remove('selected'));
@@ -850,4 +848,73 @@ function setupRemoteDesktopSessionHandler() {
   }
 }
 
+// ── Sidebar Scan Button ──────────────────────────────────────────────────────
+function setupSidebarScanBtn() {
+  const btn      = document.getElementById('btn-scan-sidebar');
+  const iconEl   = document.getElementById('scan-sidebar-icon');
+  const progress = document.getElementById('scan-sidebar-progress');
+  const bar      = document.getElementById('scan-sidebar-bar');
+  const txt      = document.getElementById('scan-sidebar-txt');
 
+  if (!btn) return;
+
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    blipContainer && (blipContainer.innerHTML = '');
+    progressFill && (progressFill.style.width = '0%');
+    btn.disabled = true;
+    if (iconEl) iconEl.textContent = '⏳';
+    if (progress) { progress.style.display = 'block'; bar.style.width = '0%'; txt.textContent = 'Scanning...'; }
+    window.api.scanNetwork();
+  });
+
+  // Mirror progress into sidebar bar
+  window.api.onScanProgress((data) => {
+    const pct = Math.floor((data.completed / data.total) * 100);
+    if (bar) bar.style.width = `${pct}%`;
+    if (txt) txt.textContent = `${data.completed} / ${data.total}`;
+  });
+
+  const onDone = () => {
+    btn.disabled = false;
+    if (iconEl) iconEl.textContent = '⟳';
+    if (progress) progress.style.display = 'none';
+  };
+  window.api.onScanComplete(onDone);
+  window.api.onScanError(onDone);
+}
+
+// ── SSH Drawer Drag-to-Resize ────────────────────────────────────────────────
+function setupSshDrawerResize() {
+  const drawer  = document.getElementById('ssh-terminal-drawer');
+  const resizer = document.getElementById('ssh-drawer-resizer');
+  const main    = document.querySelector('.main-content');
+  if (!drawer || !resizer) return;
+
+  let dragging = false, startY = 0, startH = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY; startH = drawer.offsetHeight;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ns-resize';
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const newH = Math.max(120, Math.min(window.innerHeight * 0.85, startH + (startY - e.clientY)));
+    drawer.style.height = `${newH}px`;
+    if (main) main.style.paddingBottom = `${newH}px`;
+    if (fitAddonInstance) {
+      fitAddonInstance.fit();
+      const dims = fitAddonInstance.proposeDimensions();
+      if (dims) window.api.sshResize(dims.cols, dims.rows);
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  });
+}
