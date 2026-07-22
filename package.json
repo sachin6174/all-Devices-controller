@@ -1,6 +1,6 @@
 {
     "name":  "omnishell",
-    "version":  "1.5.0",
+    "version":  "1.12.0",
     "description":  "Cross-platform network device scanner and remote SSH controller.",
     "main":  "main.js",
     "scripts":  {

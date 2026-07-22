@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTerminalMaximizeHandler();
   setupRemoteDesktopSessionHandler();
   setupRdSidebarScraper();
+  setupRouterAutoLogin();
 
   // Auto-scan on first launch
   setTimeout(() => {
@@ -722,20 +723,41 @@ function setupTerminalMaximizeHandler() {
   }
 }
 
+// Helper to activate a tab programmatically
+function activateTab(tabName) {
+  const tabButtons = document.querySelectorAll('.tab-button');
+  const tabContents = document.querySelectorAll('.tab-content');
+  tabButtons.forEach(b => {
+    if (b.dataset.tab === tabName) b.classList.add('active');
+    else b.classList.remove('active');
+  });
+  tabContents.forEach(c => {
+    if (c.id === `tab-content-${tabName}`) {
+      c.style.display = 'flex';
+      c.classList.add('active');
+    } else {
+      c.style.display = 'none';
+      c.classList.remove('active');
+    }
+  });
+}
+
+// Global reference for mirror control
+let stopMirrorGlobal = null;
+
 // Remote Desktop session list click handler + Android embedded mirror
 function setupRemoteDesktopSessionHandler() {
-  const sessionItems = document.querySelectorAll('.rd-session-item:not(.rd-android-item)');
-  const androidBtn = document.getElementById('btn-launch-android-scrcpy');
-  const stopBtn = document.getElementById('btn-stop-android-mirror');
-  const webviewWrap = document.getElementById('rd-webview-wrapper');
-  const mirrorPanel = document.getElementById('android-mirror-panel');
-  const webview = document.getElementById('wv-remote-desktop');
-  const screenImg = document.getElementById('android-screen-img');
+  const androidBtn   = document.getElementById('sidebar-android-card');
+  const stopBtn      = document.getElementById('btn-stop-android-mirror');
+  const webviewWrap  = document.getElementById('rd-webview-wrapper');
+  const mirrorPanel  = document.getElementById('android-mirror-panel');
+  const webview      = document.getElementById('wv-remote-desktop');
+  const screenImg    = document.getElementById('android-screen-img');
   const connectState = document.getElementById('android-connecting-state');
-  const deviceLabel = document.getElementById('android-device-label');
+  const deviceLabel  = document.getElementById('android-device-label');
 
   let androidDeviceInfo = null;   // { width, height } of device screen
-  let frameUnsubscribe = null;   // cleanup fn for android-frame listener
+  let frameUnsubscribe  = null;   // cleanup fn for android-frame listener
 
   // ── Show webview panel, hide mirror ──────────────────────────────────────
   function showWebview() {
@@ -745,11 +767,12 @@ function setupRemoteDesktopSessionHandler() {
 
   // ── Show mirror panel, hide webview ──────────────────────────────────────
   async function showMirror() {
+    activateTab('remote-desktop');
     if (webviewWrap) webviewWrap.style.display = 'none';
     if (mirrorPanel) mirrorPanel.style.display = 'flex';
-    if (screenImg) { screenImg.style.display = 'none'; screenImg.src = ''; }
+    if (screenImg)   { screenImg.style.display = 'none'; screenImg.src = ''; }
     if (connectState) connectState.style.display = 'block';
-    if (deviceLabel) deviceLabel.textContent = 'Connecting to device...';
+    if (deviceLabel)  deviceLabel.textContent = 'Connecting to device...';
 
     // Get device resolution for coordinate scaling
     androidDeviceInfo = await window.api.getAndroidInfo();
@@ -782,41 +805,12 @@ function setupRemoteDesktopSessionHandler() {
     if (frameUnsubscribe) { frameUnsubscribe(); frameUnsubscribe = null; }
     if (screenImg) { screenImg.src = ''; screenImg.style.display = 'none'; }
     showWebview();
-    sessionItems.forEach(s => s.classList.remove('selected'));
-    if (sessionItems[0]) sessionItems[0].classList.add('selected');
   }
+  stopMirrorGlobal = stopMirror;
 
-  // ── WebView-based sessions ────────────────────────────────────────────────
-  if (sessionItems[0]) sessionItems[0].classList.add('selected');
-  showWebview();
-
-  sessionItems.forEach(item => {
-    item.addEventListener('click', async () => {
-      // If mirror is active, stop it first
-      if (mirrorPanel && mirrorPanel.style.display !== 'none') {
-        await window.api.stopAndroidMirror();
-        if (frameUnsubscribe) { frameUnsubscribe(); frameUnsubscribe = null; }
-      }
-      sessionItems.forEach(s => s.classList.remove('selected'));
-      androidBtn && androidBtn.classList.remove('selected');
-      item.classList.add('selected');
-      showWebview();
-
-      const url = item.dataset.url;
-      if (url && webview) {
-        webview.src = url;
-        webviewWrap.style.display = 'none';
-        webview.offsetHeight;
-        setTimeout(() => { webviewWrap.style.display = 'flex'; }, 50);
-      }
-    });
-  });
-
-  // ── Android card ──────────────────────────────────────────────────────────
+  // ── Left Sidebar Android Card Click ──────────────────────────────────────
   if (androidBtn) {
     androidBtn.addEventListener('click', async () => {
-      sessionItems.forEach(s => s.classList.remove('selected'));
-      androidBtn.classList.add('selected');
       await showMirror();
     });
   }
@@ -839,13 +833,173 @@ function setupRemoteDesktopSessionHandler() {
     screenImg.addEventListener('click', e => {
       if (!androidDeviceInfo) return;
       const rect = screenImg.getBoundingClientRect();
-      const relX = (e.clientX - rect.left) / rect.width;
-      const relY = (e.clientY - rect.top) / rect.height;
+      const relX = (e.clientX - rect.left)  / rect.width;
+      const relY = (e.clientY - rect.top)   / rect.height;
       const deviceX = relX * androidDeviceInfo.width;
       const deviceY = relY * androidDeviceInfo.height;
       window.api.androidTap(deviceX, deviceY);
     });
   }
+}
+
+// ── Default Known Remote Desktop Sessions (rendered immediately on boot) ──────
+const INITIAL_RD_SESSIONS = [
+  { name: 'SACHIN-ART-MACINTOSH', sessionId: '8b87e43d-67c5-4867-83d8-e08dad50b049' },
+  { name: 'SACHIN-ART-LINUX',     sessionId: '3cbd335a-73e9-ca99-2208-f6ce757df023' },
+  { name: 'SACHIN-ART-WINDOWS',   sessionId: 'a228a061-18b5-0971-aadb-108c81833c49' }
+];
+
+// ── Chrome Remote Desktop session scraper (Deep Shadow DOM aware) ────────────
+const RD_SCRAPE_SCRIPT = `
+(function() {
+  try {
+    const knownMap = [
+      { key: 'MACINTOSH', name: 'SACHIN-ART-MACINTOSH', sessionId: '8b87e43d-67c5-4867-83d8-e08dad50b049' },
+      { key: 'LINUX',     name: 'SACHIN-ART-LINUX',     sessionId: '3cbd335a-73e9-ca99-2208-f6ce757df023' },
+      { key: 'WINDOWS',   name: 'SACHIN-ART-WINDOWS',   sessionId: 'a228a061-18b5-0971-aadb-108c81833c49' }
+    ];
+
+    // Only scrape if on the access listing page
+    if (!location.href.includes('/access') || location.href.includes('/access/session/')) {
+      return JSON.stringify([]);
+    }
+
+    const results = [];
+    const allElements = [];
+    const queue = [document.body || document.documentElement];
+    let count = 0;
+
+    while (queue.length > 0 && count < 600) {
+      const node = queue.shift();
+      if (!node) continue;
+      count++;
+      allElements.push(node);
+      if (node.children) {
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          queue.push(child);
+          if (child.shadowRoot) queue.push(child.shadowRoot);
+        }
+      }
+    }
+
+    // Direct href session ID check
+    allElements.forEach(el => {
+      try {
+        const href = el.href || el.getAttribute?.('href') || '';
+        const m = href.match(/\\/access\\/session\\/([^/?#]+)/);
+        if (m) {
+          const sessionId = m[1];
+          if (!results.some(r => r.sessionId === sessionId)) {
+            const matchedKnown = knownMap.find(k => k.sessionId === sessionId);
+            const name = matchedKnown ? matchedKnown.name : ((el.innerText || el.textContent || '').trim().split('\\n')[0].slice(0, 60) || 'Remote Host');
+            results.push({ name, sessionId });
+          }
+        }
+      } catch(e) {}
+    });
+
+    // Known hosts check
+    knownMap.forEach(item => {
+      if (!results.some(r => r.sessionId === item.sessionId)) {
+        const found = allElements.some(el => {
+          try {
+            const text = (el.innerText || el.textContent || '').toUpperCase();
+            return text.includes(item.key) && (text.includes('ONLINE') || text.includes('SACHIN'));
+          } catch(e) { return false; }
+        });
+        if (found) {
+          results.push({ name: item.name, sessionId: item.sessionId });
+        }
+      }
+    });
+
+    return JSON.stringify(results.length > 0 ? results : knownMap);
+  } catch(e) {
+    return JSON.stringify([]);
+  }
+})()
+`;
+
+function guessOsIcon(name) {
+  const n = name.toLowerCase();
+  if (n.includes('mac') || n.includes('apple') || n.includes('osx')) return '🍏';
+  if (n.includes('linux') || n.includes('ubuntu') || n.includes('debian') || n.includes('arch')) return '🐧';
+  if (n.includes('win') || n.includes('pc')) return '🪟';
+  if (n.includes('android')) return '📱';
+  if (n.includes('chrome')) return '💻';
+  return '🖥️';
+}
+
+function renderRdSidebarSessions(sessions) {
+  const sidebarList = document.getElementById('rd-sessions-sidebar-list');
+  const webview = document.getElementById('wv-remote-desktop');
+  const webviewWrap = document.getElementById('rd-webview-wrapper');
+  const mirrorPanel = document.getElementById('android-mirror-panel');
+
+  if (!sidebarList) return;
+
+  const displaySessions = (sessions && sessions.length > 0) ? sessions : INITIAL_RD_SESSIONS;
+
+  sidebarList.innerHTML = '';
+  displaySessions.forEach(s => {
+    const icon = guessOsIcon(s.name);
+    const card = document.createElement('div');
+    card.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:all 0.18s;';
+    card.innerHTML = `
+      <span style="font-size:13px;flex-shrink:0;">${icon}</span>
+      <div style="overflow:hidden;min-width:0;flex:1;">
+        <div style="font-size:10px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.name}</div>
+        <div style="font-size:8px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.sessionId.slice(0,16)}</div>
+      </div>`;
+
+    card.addEventListener('mouseenter', () => { card.style.background = 'rgba(139,92,246,0.08)'; card.style.borderColor = 'rgba(139,92,246,0.25)'; });
+    card.addEventListener('mouseleave', () => { card.style.background = 'rgba(255,255,255,0.02)'; card.style.borderColor = 'rgba(255,255,255,0.04)'; });
+
+    card.addEventListener('click', async () => {
+      activateTab('remote-desktop');
+      if (stopMirrorGlobal) await stopMirrorGlobal();
+      if (mirrorPanel) mirrorPanel.style.display = 'none';
+      if (webviewWrap) webviewWrap.style.display = 'flex';
+      if (webview) {
+        webview.src = `https://remotedesktop.google.com/access/session/${s.sessionId}`;
+      }
+    });
+
+    sidebarList.appendChild(card);
+  });
+}
+
+function setupRdSidebarScraper() {
+  const webview    = document.getElementById('wv-remote-desktop');
+  const refreshBtn = document.getElementById('btn-refresh-rd-sessions');
+
+  // Render initial default sessions immediately on boot
+  renderRdSidebarSessions(INITIAL_RD_SESSIONS);
+
+  if (!webview) return;
+
+  async function scrape() {
+    if (refreshBtn) { refreshBtn.style.opacity = '0.4'; refreshBtn.disabled = true; }
+    let scraped = [];
+    try {
+      const json = await webview.executeJavaScript(RD_SCRAPE_SCRIPT);
+      scraped = JSON.parse(json) || [];
+    } catch (e) {
+      scraped = [];
+    }
+    if (refreshBtn) { refreshBtn.style.opacity = ''; refreshBtn.disabled = false; }
+    if (scraped.length > 0) {
+      renderRdSidebarSessions(scraped);
+    }
+  }
+
+  webview.addEventListener('dom-ready', () => {
+    setTimeout(scrape, 2000);
+    setTimeout(scrape, 5000);
+  });
+
+  if (refreshBtn) refreshBtn.addEventListener('click', scrape);
 }
 
 // ── Sidebar Scan Button ──────────────────────────────────────────────────────
@@ -916,5 +1070,58 @@ function setupSshDrawerResize() {
     dragging = false;
     document.body.style.userSelect = '';
     document.body.style.cursor = '';
+  });
+}
+
+// ── Router Gateway Auto-Login handler (http://192.168.1.1/) ──────────────────
+function setupRouterAutoLogin() {
+  const webview = document.getElementById('wv-router-portal');
+  if (!webview) return;
+
+  const doAutoLogin = async () => {
+    if (!appConfig || !appConfig.router) return;
+    const { username, password } = appConfig.router;
+    if (!username || !password) return;
+
+    const script = `
+    (function() {
+      const u = ${JSON.stringify(username)};
+      const p = ${JSON.stringify(password)};
+
+      function attemptFill() {
+        const userInput = document.querySelector('input[name*="user" i], input[id*="user" i], input[name*="login" i], input[type="text"], input[name="username"]');
+        const passInput = document.querySelector('input[type="password"], input[name*="pass" i], input[id*="pass" i]');
+
+        if (userInput && passInput) {
+          userInput.value = u;
+          passInput.value = p;
+          userInput.dispatchEvent(new Event('input', { bubbles: true }));
+          userInput.dispatchEvent(new Event('change', { bubbles: true }));
+          passInput.dispatchEvent(new Event('input', { bubbles: true }));
+          passInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+          setTimeout(() => {
+            const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button[id*="login" i], input[id*="login" i], .login-btn, #btnLogin, #btn_login, #loginBtn, button');
+            if (submitBtn) submitBtn.click();
+            else if (userInput.form) userInput.form.submit();
+          }, 350);
+          return true;
+        }
+        return false;
+      }
+
+      if (!attemptFill()) {
+        setTimeout(attemptFill, 1000);
+      }
+    })()
+    `;
+
+    try {
+      await webview.executeJavaScript(script);
+    } catch(e) {}
+  };
+
+  webview.addEventListener('dom-ready', () => {
+    setTimeout(doAutoLogin, 600);
   });
 }

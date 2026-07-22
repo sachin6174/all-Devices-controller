@@ -254,9 +254,22 @@ function findAdb() {
   return 'adb'; // fallback
 }
 
+// Helper: ensure ADB device is connected
+function ensureAdbConnected() {
+  const adb = findAdb();
+  try {
+    const devicesOutput = execSync(`"${adb}" devices`, { encoding: 'utf8', stdio: ['pipe','pipe','ignore'] });
+    if (!devicesOutput.includes('\tdevice')) {
+      // Auto-connect to 192.168.1.5:5555
+      execSync(`"${adb}" connect 192.168.1.5:5555`, { encoding: 'utf8', stdio: ['pipe','pipe','ignore'] });
+    }
+  } catch(e) {}
+}
+
 // IPC: start embedded Android screen mirror (sends frames via IPC push)
 ipcMain.handle('start-android-mirror', async () => {
   androidMirrorActive = true;
+  ensureAdbConnected();
   const adb = findAdb();
 
   const captureFrame = () => {

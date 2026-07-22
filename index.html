@@ -115,7 +115,10 @@
     <main class="main-content">
       <!-- Tab Navigation Header -->
       <div class="workspace-tabs">
-        <button class="tab-button active" data-tab="remote-desktop">
+        <button class="tab-button active" data-tab="router">
+          <span>🌐</span> Router Gateway (192.168.1.1)
+        </button>
+        <button class="tab-button" data-tab="remote-desktop">
           <span>🖥️</span> Remote Desktop
         </button>
         <button class="tab-button" data-tab="chrome-login">
@@ -191,8 +194,22 @@
         </section>
       </div>
 
-      <!-- TAB 1: REMOTE DESKTOP -->
-      <div class="tab-content active" id="tab-content-remote-desktop" style="display: flex; flex: 1; overflow: hidden;">
+      <!-- TAB 1 (MAIN SCREEN): ROUTER GATEWAY PORTAL (192.168.1.1) -->
+      <div class="tab-content active" id="tab-content-router" style="display: flex; flex: 1; flex-direction: column; gap: 8px; overflow: hidden;">
+        <div class="webview-control-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); flex-shrink: 0; background: rgba(0,0,0,0.2); border-radius: 8px;">
+          <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-secondary);">
+            <span>🌐 Main Screen Gateway: <strong style="color: #38bdf8;">http://192.168.1.1/</strong></span>
+            <span id="router-auto-login-status" style="font-size: 9px; color: #4ade80; background: rgba(61,220,132,0.12); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(61,220,132,0.25);">Auto-Login Configured</span>
+          </div>
+          <button class="tab-button btn-reload-webview" data-webview-id="wv-router-portal" style="padding: 4px 10px; font-size: 10px; font-weight: 500; display: flex; align-items: center; gap: 5px; border-radius: 5px; cursor: pointer; background: rgba(255, 255, 255, 0.03);">
+            🔄 Reload Gateway
+          </button>
+        </div>
+        <webview id="wv-router-portal" src="http://192.168.1.1/" partition="persist:router-session" style="width: 100%; height: 100%; border: none; border-radius: 12px; background: #0c0a18; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);"></webview>
+      </div>
+
+      <!-- TAB 2: REMOTE DESKTOP -->
+      <div class="tab-content" id="tab-content-remote-desktop" style="display: none; flex: 1; overflow: hidden;">
 
         <!-- WebView: Chrome Remote Desktop (full width) -->
         <div id="rd-webview-wrapper" style="flex: 1; min-width: 0; border-radius: 12px; overflow: hidden; background: #0c0a18; box-shadow: 0 8px 32px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05);">

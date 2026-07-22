@@ -53,7 +53,8 @@ const slimConfig = {
     mac:     fullConfig?.ssh?.mac     ? { username: fullConfig.ssh.mac.username,     pass: fullConfig.ssh.mac.pass     } : null,
     linux:   fullConfig?.ssh?.linux   ? { username: fullConfig.ssh.linux.username,   pass: fullConfig.ssh.linux.pass   } : null,
     windows: fullConfig?.ssh?.windows ? { username: fullConfig.ssh.windows.username, pass: fullConfig.ssh.windows.pass } : null,
-  }
+  },
+  router: fullConfig?.router ? { username: fullConfig.router.username, password: fullConfig.router.password } : null
   // NOTE: github_token intentionally excluded — stays on dev machine only
 };
 
@@ -64,6 +65,7 @@ console.log('Shipping fields:');
 if (slimConfig.ssh.mac)     console.log('  ✓ ssh.mac     →', slimConfig.ssh.mac.username);
 if (slimConfig.ssh.linux)   console.log('  ✓ ssh.linux   →', slimConfig.ssh.linux.username);
 if (slimConfig.ssh.windows) console.log('  ✓ ssh.windows →', slimConfig.ssh.windows.username);
+if (slimConfig.router)      console.log('  ✓ router      →', slimConfig.router.username);
 console.log('Excluded fields:');
 console.log('  ✗ github_token (stays on dev machine)');
 console.log('--------------------------------------------------');
