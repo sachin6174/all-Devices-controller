@@ -1081,38 +1081,95 @@ function setupRouterAutoLogin() {
   const doAutoLogin = async () => {
     if (!appConfig || !appConfig.router) return;
     const { username, password } = appConfig.router;
-    if (!username || !password) return;
+    if (!username && !password) return;
 
     const script = `
     (function() {
-      const u = ${JSON.stringify(username)};
-      const p = ${JSON.stringify(password)};
+      const u = ${JSON.stringify(username || 'admin')};
+      const p = ${JSON.stringify(password || '')};
 
-      function attemptFill() {
-        const userInput = document.querySelector('input[name*="user" i], input[id*="user" i], input[name*="login" i], input[type="text"], input[name="username"]');
-        const passInput = document.querySelector('input[type="password"], input[name*="pass" i], input[id*="pass" i]');
+      function findInRoot(root) {
+        if (!root) return null;
 
-        if (userInput && passInput) {
-          userInput.value = u;
-          passInput.value = p;
-          userInput.dispatchEvent(new Event('input', { bubbles: true }));
-          userInput.dispatchEvent(new Event('change', { bubbles: true }));
-          passInput.dispatchEvent(new Event('input', { bubbles: true }));
-          passInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const inputs = Array.from(root.querySelectorAll('input'));
+        
+        let passInput = inputs.find(i => i.type === 'password' || i.name?.toLowerCase().includes('pass') || i.id?.toLowerCase().includes('pass'));
+        let userInput = inputs.find(i => i !== passInput && (i.name?.toLowerCase().includes('user') || i.id?.toLowerCase().includes('user') || i.name?.toLowerCase().includes('login') || i.id?.toLowerCase().includes('login') || i.type === 'text'));
 
-          setTimeout(() => {
-            const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button[id*="login" i], input[id*="login" i], .login-btn, #btnLogin, #btn_login, #loginBtn, button');
-            if (submitBtn) submitBtn.click();
-            else if (userInput.form) userInput.form.submit();
-          }, 350);
-          return true;
+        if (!passInput && inputs.length === 1) {
+          passInput = inputs[0];
         }
-        return false;
+
+        if (passInput) {
+          return { userInput, passInput, root };
+        }
+
+        // Check frames / iframes
+        const iframes = Array.from(root.querySelectorAll('iframe, frame'));
+        for (const frame of iframes) {
+          try {
+            const doc = frame.contentDocument || frame.contentWindow?.document;
+            if (doc) {
+              const res = findInRoot(doc);
+              if (res) return res;
+            }
+          } catch(e) {}
+        }
+
+        return null;
       }
 
-      if (!attemptFill()) {
-        setTimeout(attemptFill, 1000);
+      let attempts = 0;
+      function runLogin() {
+        attempts++;
+        const found = findInRoot(document);
+
+        if (found) {
+          const { userInput, passInput, root } = found;
+
+          // Fill username if present
+          if (userInput) {
+            userInput.value = u;
+            userInput.dispatchEvent(new Event('input', { bubbles: true }));
+            userInput.dispatchEvent(new Event('change', { bubbles: true }));
+            userInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+            userInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+          }
+
+          // Fill password
+          if (passInput) {
+            passInput.value = p;
+            passInput.dispatchEvent(new Event('input', { bubbles: true }));
+            passInput.dispatchEvent(new Event('change', { bubbles: true }));
+            passInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+            passInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+          }
+
+          // Submit form or click button
+          setTimeout(() => {
+            const btns = Array.from(root.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn-login, #loginBtn, #btnLogin, input[value*="Login" i], button[id*="login" i]'));
+            let clickTarget = btns.find(b => {
+              const txt = (b.innerText || b.value || b.textContent || '').toLowerCase();
+              return txt.includes('login') || txt.includes('sign in') || txt.includes('log in') || txt.includes('submit') || b.type === 'submit';
+            }) || btns[0];
+
+            if (clickTarget) {
+              clickTarget.click();
+            } else if (passInput.form) {
+              passInput.form.submit();
+            } else {
+              passInput.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 13, key: 'Enter', bubbles: true }));
+            }
+          }, 350);
+          return;
+        }
+
+        if (attempts < 12) {
+          setTimeout(runLogin, 600);
+        }
       }
+
+      runLogin();
     })()
     `;
 
@@ -1122,6 +1179,11 @@ function setupRouterAutoLogin() {
   };
 
   webview.addEventListener('dom-ready', () => {
-    setTimeout(doAutoLogin, 600);
+    setTimeout(doAutoLogin, 500);
+    setTimeout(doAutoLogin, 2500);
+  });
+
+  webview.addEventListener('did-finish-load', () => {
+    setTimeout(doAutoLogin, 500);
   });
 }

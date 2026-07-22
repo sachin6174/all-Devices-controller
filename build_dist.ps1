@@ -66,11 +66,26 @@ if ($LASTEXITCODE -eq 0) {
         Write-Host "Success: Encrypted config deployed to $configDst" -ForegroundColor Green
     }
     
-    # 5. Launch the newly generated installer to install the new version
+    # 5. Silently install the new version and launch the installed production app
     $installerPath = "dist\OmniShell Setup $currentVersion.exe"
     if (Test-Path -Path $installerPath) {
-        Write-Host "Status: Launching installer to set up the new version..." -ForegroundColor Green
-        Start-Process -FilePath $installerPath
+        Write-Host "Status: Silently installing OmniShell $currentVersion..." -ForegroundColor Green
+        Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait
+        Start-Sleep -Seconds 2
+
+        $path1 = "$env:LOCALAPPDATA\Programs\omnishell\OmniShell.exe"
+        $path2 = "$env:LOCALAPPDATA\Programs\OmniShell\OmniShell.exe"
+
+        if (Test-Path -Path $path1) {
+            Write-Host "Status: Launching installed production application ($path1)..." -ForegroundColor Green
+            Start-Process -FilePath $path1
+        } elseif (Test-Path -Path $path2) {
+            Write-Host "Status: Launching installed production application ($path2)..." -ForegroundColor Green
+            Start-Process -FilePath $path2
+        } else {
+            Write-Host "Status: Launching installer..." -ForegroundColor Yellow
+            Start-Process -FilePath $installerPath
+        }
     }
 } else {
     Write-Host "Error: Build process failed with exit code $LASTEXITCODE." -ForegroundColor Red
