@@ -61,6 +61,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupRdSidebarScraper();
   setupRouterAutoLogin();
 
+  // Display App Version in Top Titlebar
+  if (window.api && window.api.getAppVersion) {
+    window.api.getAppVersion().then(ver => {
+      const verEl = document.getElementById('app-version-display');
+      if (verEl && ver) verEl.textContent = `v${ver}`;
+    });
+  }
+
   // Auto-scan on first launch
   setTimeout(() => {
     const scanBtn = document.getElementById('btn-scan-sidebar');
@@ -75,20 +83,11 @@ async function loadAppConfig() {
     const configJsonDisplay = document.getElementById('config-json-display');
 
     if (appConfig) {
-      if (appConfig.ssh) {
-        if (appConfig.ssh.linux && cfgLinuxUser && cfgLinuxPass) {
-          cfgLinuxUser.textContent = appConfig.ssh.linux.username || '-';
-          cfgLinuxPass.textContent = '••••';
-        }
-        if (appConfig.ssh.mac && cfgMacUser && cfgMacPass) {
-          cfgMacUser.textContent = appConfig.ssh.mac.username || '-';
-          cfgMacPass.textContent = '••••';
-        }
-        if (appConfig.ssh.windows && cfgWindowsUser && cfgWindowsPass) {
-          cfgWindowsUser.textContent = appConfig.ssh.windows.username || '-';
-          cfgWindowsPass.textContent = '••••';
-        }
-      }
+      // NOTE: The old per-OS credential cards were removed from the sidebar in
+      // favor of the "Configuration JSON" tab. The loaded SSH profiles are now
+      // rendered from `configJsonDisplay` below — do not reference the removed
+      // cfg* elements here (undeclared references would throw and abort the
+      // rest of this function, leaving the pill and JSON view un-rendered).
       if (githubTokenPill) {
         if (appConfig.github_token) {
           githubTokenPill.textContent = 'Loaded';
@@ -1085,16 +1084,44 @@ function setupRouterAutoLogin() {
 
     const script = `
     (function() {
+      // Suppress annoying alert popups from router webpage
+      window.alert = function(msg) {
+        console.log('[Router Alert Suppressed]:', msg);
+      };
+      window.confirm = function() { return true; };
+
       const u = ${JSON.stringify(username || 'admin')};
       const p = ${JSON.stringify(password || '')};
+
+      function setNativeValue(element, value) {
+        if (!element) return;
+        try {
+          const prototype = Object.getPrototypeOf(element);
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(element, value);
+          } else {
+            element.value = value;
+          }
+        } catch(e) {
+          element.value = value;
+        }
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+      }
 
       function findInRoot(root) {
         if (!root) return null;
 
         const inputs = Array.from(root.querySelectorAll('input'));
         
-        let passInput = inputs.find(i => i.type === 'password' || i.name?.toLowerCase().includes('pass') || i.id?.toLowerCase().includes('pass'));
-        let userInput = inputs.find(i => i !== passInput && (i.name?.toLowerCase().includes('user') || i.id?.toLowerCase().includes('user') || i.name?.toLowerCase().includes('login') || i.id?.toLowerCase().includes('login') || i.type === 'text'));
+        let passInput = inputs.find(i => i.type === 'password') ||
+                        inputs.find(i => i.name?.toLowerCase().includes('pass') || i.id?.toLowerCase().includes('pass'));
+        
+        let userInput = inputs.find(i => i !== passInput && (i.name?.toLowerCase().includes('user') || i.id?.toLowerCase().includes('user') || i.name?.toLowerCase().includes('login') || i.id?.toLowerCase().includes('login'))) ||
+                        inputs.find(i => i !== passInput && i.type === 'text' && !i.hidden && i.style.display !== 'none');
 
         if (!passInput && inputs.length === 1) {
           passInput = inputs[0];
@@ -1129,42 +1156,36 @@ function setupRouterAutoLogin() {
 
           // Fill username if present
           if (userInput) {
-            userInput.value = u;
-            userInput.dispatchEvent(new Event('input', { bubbles: true }));
-            userInput.dispatchEvent(new Event('change', { bubbles: true }));
-            userInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-            userInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+            setNativeValue(userInput, u);
           }
 
           // Fill password
           if (passInput) {
-            passInput.value = p;
-            passInput.dispatchEvent(new Event('input', { bubbles: true }));
-            passInput.dispatchEvent(new Event('change', { bubbles: true }));
-            passInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-            passInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+            setNativeValue(passInput, p);
           }
 
-          // Submit form or click button
-          setTimeout(() => {
-            const btns = Array.from(root.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn-login, #loginBtn, #btnLogin, input[value*="Login" i], button[id*="login" i]'));
-            let clickTarget = btns.find(b => {
-              const txt = (b.innerText || b.value || b.textContent || '').toLowerCase();
-              return txt.includes('login') || txt.includes('sign in') || txt.includes('log in') || txt.includes('submit') || b.type === 'submit';
-            }) || btns[0];
+          // Only submit if password length is valid
+          if (p.length >= 4) {
+            setTimeout(() => {
+              const btns = Array.from(root.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn-login, #loginBtn, #btnLogin, input[value*="Login" i], button[id*="login" i]'));
+              let clickTarget = btns.find(b => {
+                const txt = (b.innerText || b.value || b.textContent || '').toLowerCase();
+                return txt.includes('login') || txt.includes('sign in') || txt.includes('log in') || txt.includes('submit') || b.type === 'submit';
+              }) || btns[0];
 
-            if (clickTarget) {
-              clickTarget.click();
-            } else if (passInput.form) {
-              passInput.form.submit();
-            } else {
-              passInput.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 13, key: 'Enter', bubbles: true }));
-            }
-          }, 350);
+              if (clickTarget) {
+                clickTarget.click();
+              } else if (passInput.form) {
+                passInput.form.submit();
+              } else {
+                passInput.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 13, key: 'Enter', bubbles: true }));
+              }
+            }, 400);
+          }
           return;
         }
 
-        if (attempts < 12) {
+        if (attempts < 10) {
           setTimeout(runLogin, 600);
         }
       }

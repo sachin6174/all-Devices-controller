@@ -200,6 +200,11 @@ ipcMain.handle('load-config', () => {
   return loadConfigData();
 });
 
+// IPC: get app version
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
+
 // IPC: launch uninstaller
 ipcMain.handle('launch-uninstaller', () => {
   const { exec } = require('child_process');
@@ -268,6 +273,11 @@ function ensureAdbConnected() {
 
 // IPC: start embedded Android screen mirror (sends frames via IPC push)
 ipcMain.handle('start-android-mirror', async () => {
+  // Guard against re-entrancy: clicking the Android card again while a mirror
+  // is already running must not spawn a second capture loop. Each loop
+  // recursively spawns `adb exec-out screencap` processes, so overlapping
+  // loops multiply the process/frame rate and never reconcile.
+  if (androidMirrorActive) return { success: true, alreadyRunning: true };
   androidMirrorActive = true;
   ensureAdbConnected();
   const adb = findAdb();
@@ -476,7 +486,12 @@ function classifyOS(hostname, vendor, banner) {
 }
 
 // Main Network Scanner Logic
+let scanInProgress = false;
 ipcMain.on('scan-network', async (event) => {
+  // Ignore overlapping scan requests: a second concurrent scan would interleave
+  // its progress/complete replies with the first and corrupt the live stats.
+  if (scanInProgress) return;
+  scanInProgress = true;
   try {
     const interfaces = os.networkInterfaces();
     const subnets = [];
@@ -576,6 +591,8 @@ ipcMain.on('scan-network', async (event) => {
   } catch (error) {
     console.error('Scan error:', error);
     event.reply('scan-error', `Scan failed: ${error.message}`);
+  } finally {
+    scanInProgress = false;
   }
 });
 
@@ -611,11 +628,12 @@ ipcMain.on('ssh-connect', (event, { ip, osType, username, password }) => {
       });
 
       stream.on('close', () => {
-        event.reply('ssh-state', { state: 'disconnected' });
         conn.end();
-        // Only clear shared state if this connection is still the active one -
-        // a newer ssh-connect call may have already replaced it.
+        // Only notify the UI / clear shared state if this connection is still
+        // the active one — a newer ssh-connect call may have already replaced
+        // it, and a stale 'disconnected' would clobber the new session's UI.
         if (activeSshConn === conn) {
+          event.reply('ssh-state', { state: 'disconnected' });
           activeSshConn = null;
           activeSshStream = null;
         }
@@ -624,16 +642,18 @@ ipcMain.on('ssh-connect', (event, { ip, osType, username, password }) => {
   });
 
   conn.on('error', (err) => {
-    event.reply('ssh-state', { state: 'error', error: err.message });
+    // Ignore errors from a connection that has already been superseded by a
+    // newer ssh-connect call, so they don't overwrite the new session's state.
     if (activeSshConn === conn) {
+      event.reply('ssh-state', { state: 'error', error: err.message });
       activeSshConn = null;
       activeSshStream = null;
     }
   });
 
   conn.on('end', () => {
-    event.reply('ssh-state', { state: 'disconnected' });
     if (activeSshConn === conn) {
+      event.reply('ssh-state', { state: 'disconnected' });
       activeSshConn = null;
       activeSshStream = null;
     }

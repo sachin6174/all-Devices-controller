@@ -1,8 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // Config loading
+  // Config loading & Version
   loadConfig: () => ipcRenderer.invoke('load-config'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // Network Scanning
   scanNetwork: () => ipcRenderer.send('scan-network'),

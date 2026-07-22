@@ -66,26 +66,13 @@ if ($LASTEXITCODE -eq 0) {
         Write-Host "Success: Encrypted config deployed to $configDst" -ForegroundColor Green
     }
     
-    # 5. Silently install the new version and launch the installed production app
-    $installerPath = "dist\OmniShell Setup $currentVersion.exe"
-    if (Test-Path -Path $installerPath) {
-        Write-Host "Status: Silently installing OmniShell $currentVersion..." -ForegroundColor Green
-        Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait
-        Start-Sleep -Seconds 2
-
-        $path1 = "$env:LOCALAPPDATA\Programs\omnishell\OmniShell.exe"
-        $path2 = "$env:LOCALAPPDATA\Programs\OmniShell\OmniShell.exe"
-
-        if (Test-Path -Path $path1) {
-            Write-Host "Status: Launching installed production application ($path1)..." -ForegroundColor Green
-            Start-Process -FilePath $path1
-        } elseif (Test-Path -Path $path2) {
-            Write-Host "Status: Launching installed production application ($path2)..." -ForegroundColor Green
-            Start-Process -FilePath $path2
-        } else {
-            Write-Host "Status: Launching installer..." -ForegroundColor Yellow
-            Start-Process -FilePath $installerPath
-        }
+    # 5. Launch compiled standalone production application directly (NO installer needed)
+    $unpackedExe = Join-Path $PSScriptRoot "dist\win-unpacked\OmniShell.exe"
+    if (Test-Path -Path $unpackedExe) {
+        Write-Host "Status: Launching compiled OmniShell version $currentVersion ($unpackedExe)..." -ForegroundColor Green
+        Start-Process -FilePath $unpackedExe
+    } else {
+        Write-Host "Error: Compiled executable not found at $unpackedExe" -ForegroundColor Red
     }
 } else {
     Write-Host "Error: Build process failed with exit code $LASTEXITCODE." -ForegroundColor Red

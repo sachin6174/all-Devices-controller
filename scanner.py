@@ -263,7 +263,9 @@ def get_local_networks():
         for line in output.splitlines():
             line = line.strip()
             if line.startswith("IPv4 Address"):
-                current_ip = line.split(":")[-1].strip().replace("Preferred", "").strip()
+                # ipconfig appends a status suffix like "192.168.1.5(Preferred)".
+                # Strip everything from the "(" so the address parses cleanly.
+                current_ip = line.split(":")[-1].strip().split("(")[0].strip()
             elif line.startswith("Subnet Mask"):
                 current_mask = line.split(":")[-1].strip()
                 if current_ip and current_mask:
