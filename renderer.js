@@ -561,6 +561,19 @@ function setupTabHandlers() {
           }
         }, 100);
       }
+
+      // 4. Ensure webview content is restored if blank when switching tabs
+      if (tabTarget === 'router-portal') {
+        const wv = document.getElementById('wv-router-portal');
+        if (wv && (!wv.src || wv.src === 'about:blank' || wv.src === '')) {
+          wv.src = 'http://192.168.1.1/';
+        }
+      } else if (tabTarget === 'remote-desktop') {
+        const wv = document.getElementById('wv-remote-desktop');
+        if (wv && (!wv.src || wv.src === 'about:blank' || wv.src === '')) {
+          wv.src = 'https://remotedesktop.google.com/access';
+        }
+      }
     });
   });
 }
@@ -581,23 +594,62 @@ function setupUninstallerHandler() {
   }
 }
 
-// WebView Reload event handler
+// WebView Reload & Failure Auto-Recovery event handler
 function setupWebViewReloadHandlers() {
+  const configs = [
+    { id: 'wv-router-portal', defaultUrl: 'http://192.168.1.1/' },
+    { id: 'wv-remote-desktop', defaultUrl: 'https://remotedesktop.google.com/access' }
+  ];
+
+  configs.forEach(({ id, defaultUrl }) => {
+    const webview = document.getElementById(id);
+    if (!webview) return;
+
+    const ensureValidUrl = () => {
+      try {
+        const url = webview.getURL ? webview.getURL() : webview.src;
+        if (!url || url === 'about:blank' || url === '') {
+          webview.src = defaultUrl;
+        }
+      } catch (e) {
+        webview.src = defaultUrl;
+      }
+    };
+
+    webview.addEventListener('render-process-gone', () => {
+      console.warn(`[Webview Recovery ${id}]: Render process gone. Reloading...`);
+      setTimeout(() => {
+        ensureValidUrl();
+        webview.reload();
+      }, 300);
+    });
+
+    webview.addEventListener('did-fail-load', (e) => {
+      if (e.errorCode === -3) return; // ignore user cancelled loads
+      console.warn(`[Webview Recovery ${id}]: Load failed. Restoring...`);
+      setTimeout(() => {
+        ensureValidUrl();
+      }, 500);
+    });
+  });
+
   const reloadButtons = document.querySelectorAll('.btn-reload-webview');
   reloadButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const wvId = btn.dataset.webviewId;
       const webview = document.getElementById(wvId);
       if (webview) {
-        webview.reload();
-
-        // Force layout repaint/reflow to prevent the WebView from going blank or shrinking
-        const origDisplay = webview.style.display;
-        webview.style.display = 'none';
-        webview.offsetHeight; // Forces a Blink reflow
-        setTimeout(() => {
-          webview.style.display = origDisplay || '';
-        }, 50);
+        try {
+          const currentUrl = webview.getURL ? webview.getURL() : webview.src;
+          if (!currentUrl || currentUrl === 'about:blank') {
+            const fallback = wvId === 'wv-router-portal' ? 'http://192.168.1.1/' : 'https://remotedesktop.google.com/access';
+            webview.src = fallback;
+          } else {
+            webview.reload();
+          }
+        } catch (e) {
+          webview.reload();
+        }
       }
     });
   });
@@ -1149,119 +1201,186 @@ function setupRouterAutoLogin() {
   });
 
   const doAutoLogin = async () => {
+    // Once we've already submitted a login this session, don't keep re-injecting
+    // on later page loads (avoids poking post-login pages / repeated submits).
+    if (loginSucceeded) return;
     if (!appConfig || !appConfig.router) return;
     const { username, password } = appConfig.router;
     if (!username && !password) return;
 
     const script = `
     (function() {
-      // Suppress annoying alert popups from router webpage
-      window.alert = function(msg) {
-        console.log('[Router Alert Suppressed]:', msg);
-      };
-      window.confirm = function() { return true; };
+      // Don't run twice in the same page context (avoid double submits / lockouts)
+      if (window.__omniAutoLoginDone) return 'already-done';
+
+      try {
+        window.alert   = function(msg) { console.log('[OmniShell-AutoLogin] alert suppressed:', msg); };
+        window.confirm = function() { return true; };
+      } catch (e) {}
 
       const u = ${JSON.stringify(username || 'admin')};
       const p = ${JSON.stringify(password || '')};
 
-      function setNativeValue(element, value) {
-        if (!element) return;
-        try {
-          const prototype = Object.getPrototypeOf(element);
-          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-          if (descriptor && descriptor.set) {
-            descriptor.set.call(element, value);
-          } else {
-            element.value = value;
-          }
-        } catch(e) {
-          element.value = value;
-        }
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
-        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+      function log(msg) { try { console.log('[OmniShell-AutoLogin] ' + msg); } catch (e) {} }
+      function result(ok, msg) {
+        try { console.log('[OmniShell-AutoLogin] RESULT ' + JSON.stringify({ ok: ok, msg: msg })); } catch (e) {}
       }
 
-      function findInRoot(root) {
-        if (!root) return null;
+      // Is the element actually usable & on-screen? Skip hidden decoy fields.
+      function isVisible(el) {
+        if (!el) return false;
+        try {
+          if (el.disabled || el.readOnly || el.type === 'hidden') return false;
+          const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+          const st = win.getComputedStyle(el);
+          if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2) return false;
+        } catch (e) { return true; }
+        return true;
+      }
 
-        const inputs = Array.from(root.querySelectorAll('input'));
-        
-        let passInput = inputs.find(i => i.type === 'password') ||
-                        inputs.find(i => i.name?.toLowerCase().includes('pass') || i.id?.toLowerCase().includes('pass'));
-        
-        let userInput = inputs.find(i => i !== passInput && (i.name?.toLowerCase().includes('user') || i.id?.toLowerCase().includes('user') || i.name?.toLowerCase().includes('login') || i.id?.toLowerCase().includes('login'))) ||
-                        inputs.find(i => i !== passInput && i.type === 'text' && !i.hidden && i.style.display !== 'none');
-
-        if (!passInput && inputs.length === 1) {
-          passInput = inputs[0];
-        }
-
-        if (passInput) {
-          return { userInput, passInput, root };
-        }
-
-        // Check frames / iframes
-        const iframes = Array.from(root.querySelectorAll('iframe, frame'));
-        for (const frame of iframes) {
-          try {
-            const doc = frame.contentDocument || frame.contentWindow?.document;
-            if (doc) {
-              const res = findInRoot(doc);
-              if (res) return res;
+      // Collect document + every open shadow root + same-origin frames.
+      function collectRoots() {
+        const roots = [];
+        const seen = new Set();
+        (function walk(root) {
+          if (!root || seen.has(root)) return;
+          seen.add(root);
+          roots.push(root);
+          let all;
+          try { all = root.querySelectorAll('*'); } catch (e) { return; }
+          for (const el of all) {
+            if (el.shadowRoot) walk(el.shadowRoot);
+            if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+              try {
+                const doc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
+                if (doc) walk(doc);
+              } catch (e) {}
             }
-          } catch(e) {}
-        }
+          }
+        })(document);
+        return roots;
+      }
 
-        return null;
+      function allOf(roots, sel) {
+        let list = [];
+        for (const r of roots) {
+          try { list = list.concat(Array.from(r.querySelectorAll(sel))); } catch (e) {}
+        }
+        return list;
+      }
+
+      function tag(i) {
+        return ((i.name || '') + ' ' + (i.id || '') + ' ' +
+                (i.getAttribute('placeholder') || '') + ' ' +
+                (i.getAttribute('aria-label') || '')).toLowerCase();
+      }
+
+      function pickFields(roots) {
+        const inputs = allOf(roots, 'input');
+        const passwords = inputs.filter(function (i) { return i.type === 'password'; });
+
+        // Prefer a VISIBLE password field; only fall back to a hidden one if
+        // nothing visible exists.
+        let passInput = passwords.filter(isVisible)[0] ||
+                        inputs.filter(function (i) { return isVisible(i) && tag(i).indexOf('pass') !== -1; })[0] ||
+                        passwords[0] || null;
+
+        const textish = inputs.filter(function (i) {
+          return i !== passInput && isVisible(i) &&
+                 (i.type === 'text' || i.type === 'email' || i.type === 'tel' || i.type === 'search' || i.type === '');
+        });
+        let userInput = textish.filter(function (i) { return /user|login|name|account|admin|email/.test(tag(i)); })[0] ||
+                        textish[0] || null;
+
+        // Single visible input → treat it as the secret field
+        if (!passInput) {
+          const vis = inputs.filter(isVisible);
+          if (vis.length === 1) passInput = vis[0];
+        }
+        return { userInput: userInput, passInput: passInput };
+      }
+
+      function setVal(el, val) {
+        if (!el) return;
+        try { el.focus(); } catch (e) {}
+        try {
+          const proto = Object.getPrototypeOf(el);
+          const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (desc && desc.set) desc.set.call(el, val);
+          else el.value = val;
+        } catch (e) { try { el.value = val; } catch (e2) {} }
+        try {
+          el.dispatchEvent(new Event('input',  { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true }));
+          el.dispatchEvent(new Event('blur',   { bubbles: true }));
+        } catch (e) {}
+      }
+
+      function findLoginButton(roots) {
+        let c = allOf(roots,
+          'button, input[type=submit], input[type=button], input[type=image], a, [role=button], [onclick], .btn, .button, .login, #loginBtn, #btnLogin');
+        c = c.filter(isVisible);
+        const rx = /(log\\s*in|log\\s*on|sign\\s*in|submit|enter|apply|连接|登录|登入|进入|确定)/i;
+        let t = c.filter(function (b) {
+          const s = (b.innerText || '') + ' ' + (b.value || '') + ' ' +
+                    (b.getAttribute('aria-label') || '') + ' ' + (b.title || '');
+          return rx.test(s);
+        })[0];
+        if (!t) t = c.filter(function (b) { return (b.type || '').toLowerCase() === 'submit'; })[0];
+        if (!t) t = c[0];
+        return t;
       }
 
       let attempts = 0;
       function runLogin() {
+        if (window.__omniAutoLoginDone) return;
         attempts++;
-        const found = findInRoot(document);
+        const roots = collectRoots();
+        const f = pickFields(roots);
 
-        if (found) {
-          const { userInput, passInput, root } = found;
+        if (f.passInput) {
+          if (f.userInput) setVal(f.userInput, u);
+          setVal(f.passInput, p);
+          log('filled user=' + !!f.userInput + ' pass=' + !!f.passInput);
 
-          // Fill username if present
-          if (userInput) {
-            setNativeValue(userInput, u);
-          }
+          setTimeout(function () {
+            if (window.__omniAutoLoginDone) return;
+            // Some pages wipe fields on re-render — re-assert the values.
+            if (f.passInput.value !== p) setVal(f.passInput, p);
+            if (f.userInput && f.userInput.value !== u) setVal(f.userInput, u);
 
-          // Fill password
-          if (passInput) {
-            setNativeValue(passInput, p);
-          }
+            if (p.length < 1) { result(false, 'Password empty in config'); return; }
 
-          // Only submit if password length is valid
-          if (p.length >= 4) {
-            setTimeout(() => {
-              const btns = Array.from(root.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn-login, #loginBtn, #btnLogin, input[value*="Login" i], button[id*="login" i]'));
-              let clickTarget = btns.find(b => {
-                const txt = (b.innerText || b.value || b.textContent || '').toLowerCase();
-                return txt.includes('login') || txt.includes('sign in') || txt.includes('log in') || txt.includes('submit') || b.type === 'submit';
-              }) || btns[0];
-
-              if (clickTarget) {
-                clickTarget.click();
-              } else if (passInput.form) {
-                passInput.form.submit();
-              } else {
-                passInput.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 13, key: 'Enter', bubbles: true }));
-              }
-            }, 400);
-          }
+            const btn = findLoginButton(collectRoots());
+            const label = btn ? String(btn.innerText || btn.value || btn.id || btn.className || 'login').trim().slice(0, 30) : '';
+            window.__omniAutoLoginDone = true;
+            if (btn) {
+              try { btn.click(); } catch (e) {}
+              result(true, 'Filled + clicked: ' + (label || 'login'));
+            } else if (f.passInput.form) {
+              try { f.passInput.form.requestSubmit ? f.passInput.form.requestSubmit() : f.passInput.form.submit(); } catch (e) {}
+              result(true, 'Filled + submitted form');
+            } else {
+              try {
+                f.passInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                f.passInput.dispatchEvent(new KeyboardEvent('keyup',   { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+              } catch (e) {}
+              result(true, 'Filled + pressed Enter');
+            }
+          }, 450);
           return;
         }
 
-        if (attempts < 10) {
-          setTimeout(runLogin, 600);
-        }
+        if (attempts < 15) setTimeout(runLogin, 600);
+        else result(false, 'Login form not found');
       }
 
       runLogin();
+      return 'started';
     })()
     `;
 
