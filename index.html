@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniShell</title>
+  <!-- Outfit Font from Google Fonts for clean, premium styling -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  
+  <!-- Local xterm.js assets -->
+  <link rel="stylesheet" href="./node_modules/xterm/css/xterm.css" />
+  <script src="./node_modules/xterm/lib/xterm.js"></script>
+  <script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <!-- Custom Drag Titlebar for premium macOS/Windows look -->
+  <div class="custom-titlebar">
+    <div class="titlebar-logo">
+      <span>OmniShell</span>
+    </div>
+    <div class="titlebar-actions">
+      <button class="titlebar-btn" id="btn-minimize" title="Minimize">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+      <button class="titlebar-btn" id="btn-maximize" title="Maximize/Restore">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+        </svg>
+      </button>
+      <button class="titlebar-btn btn-close" id="btn-close" title="Close">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- Sidebar: Loaded Credentials and Configurations -->
+    <aside class="sidebar glassmorphic" id="sidebar">
+
+
+      <!-- Left Sidebar: Discovered Devices list -->
+      <div class="sidebar-devices-section" id="sidebar-devices-section">
+        <div class="sidebar-devices-header">
+          <h4>Active Devices</h4>
+          <span class="badge" id="devices-count">0 Online</span>
+        </div>
+        <div class="devices-list" id="devices-list">
+          <div class="empty-state-side">
+            <span>Click Scan to find hosts</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Remote Sessions from Chrome Remote Desktop -->
+      <div class="sidebar-devices-section" id="sidebar-rd-section" style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
+        <div class="sidebar-devices-header" style="display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="font-size: 11px;">🖥️ Remote Sessions</h4>
+          <button id="btn-refresh-rd-sessions" title="Refresh from Chrome Remote Desktop" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 2px 4px; border-radius: 4px; line-height: 1;">↺</button>
+        </div>
+        <div id="rd-sessions-sidebar-list" style="display: flex; flex-direction: column; gap: 5px; margin-top: 6px;">
+          <div style="font-size: 10px; color: var(--text-muted); padding: 4px 2px;">Open Remote Desktop tab to load sessions</div>
+        </div>
+      </div>
+
+      <!-- App Uninstaller Action -->
+      <div class="uninstaller-box" style="margin-top: 10px; padding: 0 4px; flex-shrink: 0;">
+        <button id="btn-uninstall-app" class="tab-button" style="width: 100%; gap: 6px; justify-content: center; background: rgba(239, 68, 68, 0.04); border: 1px solid rgba(239, 68, 68, 0.15); color: #f87171; font-weight: 500; font-size: 11px; padding: 6px 12px; transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.12)'; this.style.borderColor='rgba(239, 68, 68, 0.4)'; this.style.color='#fca5a5'" onmouseout="this.style.background='rgba(239, 68, 68, 0.04)'; this.style.borderColor='rgba(239, 68, 68, 0.15)'; this.style.color='#f87171'">
+          <span>❌</span> Uninstall OmniShell
+        </button>
+      </div>
+      
+      <!-- Drag & Click Sidebar Resizer Handle -->
+      <div class="sidebar-resizer" id="sidebar-resizer" title="Drag to Resize / Click to Toggle Sidebar">
+        <div class="resizer-handle-line"></div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Tab Navigation Header -->
+      <div class="workspace-tabs">
+        <button class="tab-button active" data-tab="console">
+          <span>📟</span> Console Workspace
+        </button>
+        <button class="tab-button" data-tab="chrome-login">
+          <span>🔑</span> Google Login
+        </button>
+        <button class="tab-button" data-tab="remote-desktop">
+          <span>🖥️</span> Remote Desktop
+        </button>
+        <button class="tab-button" data-tab="config">
+          <span>⚙️</span> Configuration JSON
+        </button>
+      </div>
+
+      <!-- TAB 1: CONSOLE WORKSPACE (Radar + Terminals) -->
+      <div class="tab-content active" id="tab-content-console">
+        <!-- Radar Sweep Panel -->
+        <section class="radar-panel glassmorphic" id="radar-panel">
+          <div class="radar-controls">
+            <div class="radar-info" id="radar-title-group" style="cursor: pointer; display: flex; align-items: center; gap: 10px; user-select: none; -webkit-app-region: no-drag;">
+              <span class="radar-chevron">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </span>
+              <div>
+                <h2>Network Discovery</h2>
+                <p id="subnet-label">Ready to scan local network</p>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="btn-scan">
+              <span class="btn-text">Start Scan</span>
+              <span class="scanner-pulse"></span>
+            </button>
+          </div>
+
+          <div class="radar-visual-container" id="radar-visual-container">
+            <!-- radar screen background -->
+            <div class="radar-screen">
+              <div class="radar-sweep"></div>
+              <div class="radar-circle circle-1"></div>
+              <div class="radar-circle circle-2"></div>
+              <div class="radar-circle circle-3"></div>
+              <div class="radar-crosshair-h"></div>
+              <div class="radar-crosshair-v"></div>
+              <div class="radar-blip-container" id="blip-container">
+                <!-- Active discovered hosts blips will appear here -->
+              </div>
+            </div>
+
+            <div class="radar-stats">
+              <div class="stat-card">
+                <span class="stat-num" id="stat-scanned">0</span>
+                <span class="stat-lbl">Hosts Scanned</span>
+              </div>
+              <div class="stat-card active-devices">
+                <span class="stat-num" id="stat-active">0</span>
+                <span class="stat-lbl">Active Found</span>
+              </div>
+              <div class="stat-card ssh-devices">
+                <span class="stat-num" id="stat-ssh">0</span>
+                <span class="stat-lbl">SSH Hosts</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scanning progress bar -->
+          <div class="progress-bar-container" id="progress-container" style="display: none;">
+            <div class="progress-info">
+              <span id="progress-text">Scanning: 0/254</span>
+              <span id="current-ip-text">Target: -</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Welcome Dashboard Panel (Visible when disconnected) -->
+        <section class="welcome-panel glassmorphic" id="welcome-panel">
+          <div class="welcome-content">
+            <div class="welcome-logo">⚙️</div>
+            <h3>Console Workspace</h3>
+            <p>No active SSH sessions connected.</p>
+            <div class="welcome-steps">
+              <div class="welcome-step">
+                <div class="step-num">1</div>
+                <div class="step-text">Click <strong>Start Scan</strong> above to sweep local subnets.</div>
+              </div>
+              <div class="welcome-step">
+                <div class="step-num">2</div>
+                <div class="step-text">Discovered hosts will appear in the <strong>left panel (Active Devices)</strong>.</div>
+              </div>
+              <div class="welcome-step">
+                <div class="step-num">3</div>
+                <div class="step-text">Click on any SSH-accessible host to <strong>instantly take remote control</strong>.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Embedded Terminal Workspace Panel (Visible during active connection) -->
+        <section class="terminal-panel glassmorphic" id="terminal-panel" style="display: none;">
+          <div class="terminal-header">
+            <div class="terminal-title-info">
+              <span class="connection-status-dot"></span>
+              <div>
+                <h4 id="term-host-title">Remote Control Session</h4>
+                <p class="subtitle" id="term-host-sub">Connecting to ...</p>
+              </div>
+            </div>
+            <div class="terminal-header-actions">
+              <button class="btn btn-secondary btn-sm" id="btn-maximize-term" title="Maximize/Restore Terminal View">Expand View</button>
+              <button class="btn btn-secondary btn-sm" id="btn-clear-term">Clear</button>
+              <button class="btn btn-secondary btn-sm" id="btn-disconnect-term" style="color: var(--color-danger); border-color: rgba(239,68,68,0.25);">Disconnect</button>
+            </div>
+          </div>
+
+          <!-- Credentials prompt, visible only if fallback/override is needed -->
+          <div class="connection-setup-panel" id="connection-setup" style="display: none;">
+            <div class="setup-form">
+              <h5>Authentication Failed / Custom Details</h5>
+              <p>Please enter credentials to retry connection:</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="ssh-user-input">Username</label>
+                  <input type="text" id="ssh-user-input" placeholder="username">
+                </div>
+                <div class="form-group">
+                  <label for="ssh-pass-input">Password</label>
+                  <input type="password" id="ssh-pass-input" placeholder="password">
+                </div>
+                <button class="btn btn-primary" id="btn-launch-ssh">Retry Connection</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- The xterm interactive terminal element -->
+          <div class="terminal-body" id="terminal-body">
+            <div id="terminal-container"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- TAB 2: CHROME LOGIN PORTAL -->
+      <div class="tab-content" id="tab-content-chrome-login" style="display: none; flex: 1; flex-direction: column; gap: 10px;">
+        <div class="webview-control-bar" style="display: flex; justify-content: flex-end; padding: 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); flex-shrink: 0;">
+          <button class="tab-button btn-reload-webview" data-webview-id="wv-chrome-login" style="padding: 6px 12px; font-size: 11px; font-weight: 500; display: flex; align-items: center; gap: 6px; border-radius: 6px; cursor: pointer; background: rgba(255, 255, 255, 0.015);">
+            🔄 Reload Portal
+          </button>
+        </div>
+        <webview id="wv-chrome-login" src="https://accounts.google.com/ServiceLogin?hl=en" partition="persist:google-session" useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0" style="width: 100%; height: 100%; border: none; border-radius: 12px; background: #0c0a18; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);"></webview>
+      </div>
+
+      <!-- TAB 3: CHROME REMOTE DESKTOP WEBVIEW -->
+      <div class="tab-content" id="tab-content-remote-desktop" style="display: none; flex: 1; overflow: hidden;">
+
+        <!-- Full-height two-panel layout: sidebar + remote view -->
+        <div style="display: flex; width: 100%; height: 100%; gap: 12px; overflow: hidden;">
+
+          <!-- ── Left Sidebar ── -->
+          <div class="rd-sidebar glassmorphic" style="width: 230px; flex-shrink: 0; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden;">
+            <!-- Header -->
+            <div style="padding: 14px 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); flex-shrink: 0;">
+              <h4 style="font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 2px;">Remote Sessions</h4>
+              <p style="font-size: 10px; color: var(--text-muted); margin: 0;">Select target host to connect</p>
+            </div>
+            <!-- Session list -->
+            <div class="rd-sessions-list" style="display: flex; flex-direction: column; gap: 7px; padding: 12px; flex: 1; overflow-y: auto;">
+
+              <!-- Session 1: macOS -->
+              <div class="rd-session-item" data-url="https://remotedesktop.google.com/access/session/8b87e43d-67c5-4867-83d8-e08dad50b049" style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); cursor: pointer; transition: all 0.2s;">
+                <span style="font-size: 16px; flex-shrink: 0;">🍏</span>
+                <div style="display: flex; flex-direction: column; gap: 1px; overflow: hidden; min-width: 0;">
+                  <span style="font-size: 11px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">macOS Remote Host</span>
+                  <span style="font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">8b87e43d-67c5</span>
+                </div>
+              </div>
+
+              <!-- Session 2: Linux -->
+              <div class="rd-session-item" data-url="https://remotedesktop.google.com/access/session/3cbd335a-73e9-ca99-2208-f6ce757df023" style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); cursor: pointer; transition: all 0.2s;">
+                <span style="font-size: 16px; flex-shrink: 0;">🐧</span>
+                <div style="display: flex; flex-direction: column; gap: 1px; overflow: hidden; min-width: 0;">
+                  <span style="font-size: 11px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Linux Remote Host</span>
+                  <span style="font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">3cbd335a-73e9</span>
+                </div>
+              </div>
+
+              <!-- Session 3: Windows -->
+              <div class="rd-session-item" data-url="https://remotedesktop.google.com/access/session/a228a061-18b5-0971-aadb-108c81833c49" style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); cursor: pointer; transition: all 0.2s;">
+                <span style="font-size: 16px; flex-shrink: 0;">🪟</span>
+                <div style="display: flex; flex-direction: column; gap: 1px; overflow: hidden; min-width: 0;">
+                  <span style="font-size: 11px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Windows Remote Host</span>
+                  <span style="font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">a228a061-18b5</span>
+                </div>
+              </div>
+
+              <!-- Session 4: Android (Embedded Mirror) -->
+              <div class="rd-session-item rd-android-item" id="btn-launch-android-scrcpy" style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(61,220,132,0.04); border: 1px solid rgba(61,220,132,0.12); cursor: pointer; transition: all 0.2s; margin-top: 2px;">
+                <span style="font-size: 16px; flex-shrink: 0;">📱</span>
+                <div style="display: flex; flex-direction: column; gap: 1px; overflow: hidden; min-width: 0;">
+                  <span style="font-size: 11px; font-weight: 600; color: #4ade80; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Android (Scrcpy)</span>
+                  <span style="font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Wireless / USB Mirror</span>
+                </div>
+                <span style="font-size: 8px; background: rgba(61,220,132,0.15); color: #4ade80; padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(61,220,132,0.25); margin-left: auto; flex-shrink: 0;">Embedded</span>
+              </div>
+
+            </div>
+            <!-- Footer: Reload button -->
+            <div style="padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.04); flex-shrink: 0;">
+              <button class="btn-reload-webview" data-webview-id="wv-remote-desktop"
+                style="width: 100%; padding: 7px 10px; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); color: var(--text-muted); transition: all 0.2s;">
+                🔄 Reload Remote Desktop
+              </button>
+            </div>
+          </div>
+
+          <!-- ── Right: WebView (Google sessions) ── -->
+          <div id="rd-webview-wrapper" style="flex: 1; min-width: 0; border-radius: 12px; overflow: hidden; background: #0c0a18; box-shadow: 0 8px 32px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05);">
+            <webview id="wv-remote-desktop"
+              src="https://remotedesktop.google.com/access"
+              partition="persist:google-session"
+              useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0"
+              style="width: 100%; height: 100%; border: none;">
+            </webview>
+          </div>
+
+          <!-- ── Right: Android Embedded Mirror Panel ── -->
+          <div id="android-mirror-panel" style="display: none; flex: 1; min-width: 0; flex-direction: column; border-radius: 12px; overflow: hidden; background: #070d0a; border: 1px solid rgba(61,220,132,0.15); box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+            <!-- Top control bar -->
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: rgba(0,0,0,0.4); flex-shrink: 0; border-bottom: 1px solid rgba(61,220,132,0.08);">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">📱</span>
+                <div>
+                  <div style="font-size: 12px; font-weight: 600; color: #4ade80; line-height: 1;">Android Mirror</div>
+                  <div id="android-device-label" style="font-size: 9px; color: var(--text-muted); margin-top: 2px;">Connecting to device...</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 5px; align-items: center;">
+                <button class="android-key-btn" data-key="4" title="Back" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">◀ Back</button>
+                <button class="android-key-btn" data-key="3" title="Home" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">⌂ Home</button>
+                <button class="android-key-btn" data-key="187" title="Recent Apps" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">⧉ Apps</button>
+                <span style="width: 1px; height: 20px; background: rgba(255,255,255,0.06); margin: 0 2px;"></span>
+                <button class="android-key-btn" data-key="24" title="Volume Up" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">🔊+</button>
+                <button class="android-key-btn" data-key="25" title="Volume Down" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">🔉−</button>
+                <span style="width: 1px; height: 20px; background: rgba(255,255,255,0.06); margin: 0 2px;"></span>
+                <button class="android-key-btn" data-key="26" title="Power" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: var(--text-secondary); cursor: pointer;">⏻</button>
+                <button id="btn-stop-android-mirror" title="Stop Mirror" style="padding: 4px 8px; font-size: 10px; border-radius: 5px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); color: #f87171; cursor: pointer;">■ Stop</button>
+              </div>
+            </div>
+            <!-- Screen area -->
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; position: relative;">
+              <div id="android-connecting-state" style="text-align: center; color: var(--text-muted); position: absolute;">
+                <div style="font-size: 36px; margin-bottom: 12px;">📱</div>
+                <div style="font-size: 13px; color: #4ade80; margin-bottom: 6px; font-weight: 600;">Connecting to Android device...</div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ensure USB Debugging or Wireless ADB is enabled</div>
+              </div>
+              <img id="android-screen-img" src="" alt=""
+                style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; cursor: crosshair; display: none; box-shadow: 0 4px 24px rgba(0,0,0,0.6);"
+              />
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+
+      <!-- TAB 4: CONFIGURATION JSON VIEW -->
+      <div class="tab-content" id="tab-content-config" style="display: none; flex: 1; flex-direction: column;">
+        <section class="terminal-panel glassmorphic" style="flex: 1; padding: 24px; display: flex; flex-direction: column; overflow: hidden;">
+          <div class="terminal-header" style="margin-bottom: 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 14px; flex-shrink: 0;">
+            <div class="terminal-title-info">
+              <span style="font-size: 16px;">⚙️</span>
+              <div>
+                <h4>sachin-person.config</h4>
+                <p class="subtitle">Active profiles and credential parameters loaded on boot</p>
+              </div>
+            </div>
+          </div>
+          <div class="terminal-body" style="flex: 1; background: #07050a; padding: 18px; overflow: auto; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px;">
+            <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code id="config-json-display" style="font-family: var(--font-mono); font-size: 13px; color: var(--color-cyan); line-height: 1.6;">{}</code></pre>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
