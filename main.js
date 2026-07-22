@@ -325,13 +325,20 @@ ipcMain.handle('android-key', (event, keycode) => {
   return { success: true };
 });
 
+// IPC: send swipe/drag input to Android device
+ipcMain.handle('android-swipe', (event, { x1, y1, x2, y2, duration = 300 }) => {
+  const adb = findAdb();
+  exec(`"${adb}" shell input swipe ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)} ${Math.round(duration)}`, { windowsHide: true });
+  return { success: true };
+});
+
 // IPC: get Android device screen resolution
 ipcMain.handle('get-android-info', () => {
   return new Promise(resolve => {
     const adb = findAdb();
     exec(`"${adb}" shell wm size`, { windowsHide: true }, (err, stdout) => {
-      if (err) { resolve(null); return; }
-      const m = stdout.match(/Physical size:\s*(\d+)x(\d+)/);
+      if (err || !stdout) { resolve(null); return; }
+      const m = stdout.match(/size:\s*(\d+)x(\d+)/i);
       if (m) resolve({ width: parseInt(m[1]), height: parseInt(m[2]) });
       else resolve(null);
     });

@@ -51,8 +51,9 @@ contextBridge.exposeInMainWorld('api', {
   // Android embedded mirror
   startAndroidMirror: () => ipcRenderer.invoke('start-android-mirror'),
   stopAndroidMirror:  () => ipcRenderer.invoke('stop-android-mirror'),
-  androidTap:  (deviceX, deviceY) => ipcRenderer.invoke('android-tap', { deviceX, deviceY }),
-  androidKey:  (keycode)          => ipcRenderer.invoke('android-key', keycode),
+  androidTap:   (deviceX, deviceY) => ipcRenderer.invoke('android-tap', { deviceX, deviceY }),
+  androidSwipe: (x1, y1, x2, y2, duration) => ipcRenderer.invoke('android-swipe', { x1, y1, x2, y2, duration }),
+  androidKey:   (keycode)          => ipcRenderer.invoke('android-key', keycode),
   getAndroidInfo: ()              => ipcRenderer.invoke('get-android-info'),
   onAndroidFrame: (callback) => {
     const listener = (event, base64) => callback(base64);

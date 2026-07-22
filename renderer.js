@@ -827,16 +827,62 @@ function setupRemoteDesktopSessionHandler() {
     });
   });
 
-  // ── Click-to-tap on screen image ─────────────────────────────────────────
+  // ── Mouse Click & Drag/Swipe Control on Android Screen Image ─────────────
   if (screenImg) {
-    screenImg.addEventListener('click', e => {
-      if (!androidDeviceInfo) return;
+    let isMouseDown = false;
+    let startClientX = 0, startClientY = 0;
+    let startTime = 0;
+
+    screenImg.addEventListener('mousedown', e => {
+      isMouseDown = true;
+      startClientX = e.clientX;
+      startClientY = e.clientY;
+      startTime = Date.now();
+      e.preventDefault();
+    });
+
+    screenImg.addEventListener('mouseup', e => {
+      if (!isMouseDown) return;
+      isMouseDown = false;
+
       const rect = screenImg.getBoundingClientRect();
-      const relX = (e.clientX - rect.left)  / rect.width;
-      const relY = (e.clientY - rect.top)   / rect.height;
-      const deviceX = relX * androidDeviceInfo.width;
-      const deviceY = relY * androidDeviceInfo.height;
-      window.api.androidTap(deviceX, deviceY);
+      const endClientX = e.clientX;
+      const endClientY = e.clientY;
+      const duration = Math.min(1000, Math.max(150, Date.now() - startTime));
+
+      // Relative coordinates (0.0 to 1.0)
+      const relStartX = Math.max(0, Math.min(1, (startClientX - rect.left) / rect.width));
+      const relStartY = Math.max(0, Math.min(1, (startClientY - rect.top)  / rect.height));
+      const relEndX   = Math.max(0, Math.min(1, (endClientX - rect.left)   / rect.width));
+      const relEndY   = Math.max(0, Math.min(1, (endClientY - rect.top)    / rect.height));
+
+      // Device resolution (with fallback to natural image size or default 1080x2340)
+      const width  = (androidDeviceInfo && androidDeviceInfo.width)  || screenImg.naturalWidth  || 1080;
+      const height = (androidDeviceInfo && androidDeviceInfo.height) || screenImg.naturalHeight || 2340;
+
+      const x1 = Math.round(relStartX * width);
+      const y1 = Math.round(relStartY * height);
+      const x2 = Math.round(relEndX * width);
+      const y2 = Math.round(relEndY * height);
+
+      const dx = Math.abs(endClientX - startClientX);
+      const dy = Math.abs(endClientY - startClientY);
+
+      if (dx < 10 && dy < 10) {
+        // Simple click -> tap
+        window.api.androidTap(x1, y1);
+      } else {
+        // Drag -> swipe gesture
+        if (window.api.androidSwipe) {
+          window.api.androidSwipe(x1, y1, x2, y2, duration);
+        } else {
+          window.api.androidTap(x2, y2);
+        }
+      }
+    });
+
+    screenImg.addEventListener('mouseleave', () => {
+      isMouseDown = false;
     });
   }
 }
@@ -1076,6 +1122,31 @@ function setupSshDrawerResize() {
 function setupRouterAutoLogin() {
   const webview = document.getElementById('wv-router-portal');
   if (!webview) return;
+
+  const statusPill = document.getElementById('router-auto-login-status');
+  let loginSucceeded = false;
+
+  // Surface the injected auto-login script's diagnostics into the app console
+  // and reflect the outcome in the status pill, so failures are actually visible
+  // instead of silently doing nothing.
+  webview.addEventListener('console-message', (e) => {
+    const m = (e && e.message) || '';
+    if (!m.startsWith('[OmniShell-AutoLogin]')) return;
+    console.log(m);
+    const idx = m.indexOf('RESULT ');
+    if (idx === -1 || !statusPill) return;
+    try {
+      const info = JSON.parse(m.slice(idx + 7));
+      // Once a login has succeeded, don't let a later dashboard scan (which has
+      // no login form) flip the pill back to a warning.
+      if (!info.ok && loginSucceeded) return;
+      if (info.ok) loginSucceeded = true;
+      statusPill.textContent      = (info.ok ? '✓ ' : '⚠ ') + info.msg;
+      statusPill.style.color       = info.ok ? '#4ade80' : '#fbbf24';
+      statusPill.style.background   = info.ok ? 'rgba(61,220,132,0.12)' : 'rgba(251,191,36,0.12)';
+      statusPill.style.borderColor  = info.ok ? 'rgba(61,220,132,0.25)' : 'rgba(251,191,36,0.30)';
+    } catch (err) {}
+  });
 
   const doAutoLogin = async () => {
     if (!appConfig || !appConfig.router) return;
