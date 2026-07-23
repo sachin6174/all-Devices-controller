@@ -67,24 +67,37 @@ Create or update your local `sachin-person.config` file in the root directory:
 ```json
 {
   "ssh": {
-    "mac": {
-      "username": "sachinkumar",
-      "pass": "1111"
+    "macPersonal": {
+      "username": "your-mac-username",
+      "pass": "your-mac-password"
     },
-    "linux": {
-      "username": "test",
-      "pass": "test"
+    "linuxPersonal": {
+      "username": "your-linux-username",
+      "pass": "your-linux-password"
     },
-    "windows": {
-      "username": "sachinkumar",
-      "pass": "1111"
+    "windowsPersonal": {
+      "username": "your-win-username",
+      "pass": "your-win-password"
     }
   },
+  "remotePass": "123456",
   "router": {
     "username": "admin",
-    "password": "MACosagent1@#"
+    "password": "your-router-password"
   },
-  "github_token": "github_pat_EXAMPLE_TOKEN_STAYS_LOCAL"
+  "apple": {
+    "email": "your-apple-id@example.com",
+    "team_id": "YOUR_TEAM_ID",
+    "app_specific_passwords": {
+      "OmniShell": "xxxx-xxxx-xxxx-xxxx"
+    },
+    "app_store_connect": {
+      "key_id": "YOUR_KEY_ID",
+      "issuer_id": "YOUR_ISSUER_UUID",
+      "private_key_base64": "YOUR_BASE64_ENCODED_P8_KEY"
+    }
+  },
+  "github_token": "github_pat_YOUR_GITHUB_TOKEN"
 }
 ```
 
