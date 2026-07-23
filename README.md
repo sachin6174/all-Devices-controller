@@ -97,7 +97,25 @@ Create or update your local `sachin-person.config` file in the root directory:
       "private_key_base64": "YOUR_BASE64_ENCODED_P8_KEY"
     }
   },
-  "github_token": "github_pat_YOUR_GITHUB_TOKEN"
+  "github_token": "github_pat_YOUR_GITHUB_TOKEN",
+  "hardware": {
+    "iosPersonal": {
+      "name": "Your iPhone Name",
+      "udid": "YOUR_IOS_DEVICE_UDID",
+      "hostDevice": "macPersonal",
+      "hostIp": "192.168.1.15",
+      "alwaysConnected": true,
+      "description": "Real physical iPhone connected to MacBook"
+    },
+    "androidPersonal": {
+      "name": "Android Wireless/USB Device",
+      "connectScript": "Connect-Android-Scrcpy.bat",
+      "scrcpyAutoConnect": true,
+      "adbWirelessScan": true,
+      "adbPorts": "5555-5565",
+      "description": "Android device with scrcpy auto-connection and wireless ADB subnet scanner"
+    }
+  }
 }
 ```
 
@@ -106,18 +124,19 @@ Create or update your local `sachin-person.config` file in the root directory:
 
 ---
 
-## 📦 Building & Releasing
+## 📦 Building & Releasing Across Platforms
 
-To generate signed installer executables and portable zips:
-
+### 🚀 1. Master Multi-Platform Build & Release Pipeline
+Automatically builds local Windows binaries, SSHs to MacBook for Apple Developer ID code-signing & notarization, compiles native `x86_64` Linux binaries on the Linux device, and publishes 8 production assets to GitHub Releases:
 ```powershell
-powershell -ExecutionPolicy Bypass -File build_dist.ps1
+node remote_build_release.js
 ```
 
-### Outputs generated in `dist/`:
-- 📦 **Windows NSIS Installer**: `dist\OmniShell Setup <version>.exe`
-- 📁 **Portable ZIP**: `dist\OmniShell-<version>-win.zip`
-- 🔒 **Encrypted Production Config**: `C:\Users\sachi\sachin-person.cfg`
+### 🖥️ 2. Multi-Platform Automated Installer & Desktop Shortcut Manager
+Installs packaged releases across Windows PC, MacBook, and Linux Device, sets up desktop shortcuts, and auto-launches live on physical displays:
+```powershell
+node install_all_devices.js
+```
 
 ---
 
@@ -125,15 +144,16 @@ powershell -ExecutionPolicy Bypass -File build_dist.ps1
 
 ```text
 all-Devices-controller/
-├── build_dist.ps1          # Master build, signing & auto-launch pipeline
+├── remote_build_release.js # 3-Platform build, Apple Developer ID signing & notarization engine
+├── install_all_devices.js  # Automated multi-platform installer, launcher & desktop shortcut setup
+├── build_dist.ps1          # Master Windows local build, signing & auto-launch pipeline
 ├── encrypt_config.js       # AES-256-GCM config encryptor
-├── create_cert.ps1         # Self-signed code signing certificate generator
 ├── main.js                 # Electron main process (IPC handlers, ADB spawn, SSH)
 ├── preload.js              # Secure IPC bridge (contextBridge)
 ├── renderer.js             # UI logic, webview scrapers, xterm.js, tab handlers
 ├── index.html              # App layout, webviews, drawer & left panel
 ├── index.css               # Modern glassmorphism CSS design system
-├── scanner.py              # Multithreaded Python subnet scanner
+├── Connect-Android-Scrcpy.bat # Android scrcpy wireless connector launcher
 ├── build/
 │   ├── certificate.pfx     # Code signing certificate (excluded from git)
 │   └── icon.png            # Application icon

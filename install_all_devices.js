@@ -149,19 +149,21 @@ async function main() {
     await sshExec(linuxConn, 'mkdir -p /home/test/.local/share/icons /home/test/Desktop');
     await sftpUploadFile(linuxConn, iconPath, '/home/test/.local/share/icons/omnishell.png');
 
-    // Directly SFTP upload compiled AppImage and .deb binaries from local dist/ to Linux device
-    const localAppImage = files.find(f => f.endsWith('.AppImage'));
-    const localDeb      = files.find(f => f.endsWith('.deb'));
+    // Directly SFTP upload latest compiled AppImage and .deb binaries from local dist/ to Linux device
+    const appImages = files.filter(f => f.endsWith('.AppImage')).sort();
+    const debs      = files.filter(f => f.endsWith('.deb')).sort();
+    const localAppImage = appImages[appImages.length - 1];
+    const localDeb      = debs[debs.length - 1];
 
     if (localAppImage) {
-      console.log(`Status: Direct SFTP uploading ${localAppImage} to Linux Desktop...`);
+      console.log(`Status: Direct SFTP uploading latest native AppImage (${localAppImage}) to Linux Desktop...`);
       await sftpUploadFile(linuxConn, path.join(distDir, localAppImage), '/home/test/Desktop/OmniShell.AppImage');
       await sftpUploadFile(linuxConn, path.join(distDir, localAppImage), '/home/test/Desktop/OmniShell');
-      console.log('Success: Direct SFTP uploaded OmniShell.AppImage to Linux Desktop!');
+      console.log(`Success: Direct SFTP uploaded ${localAppImage} to Linux Desktop!`);
     }
 
     if (localDeb) {
-      console.log(`Status: Direct SFTP uploading ${localDeb} to Linux Device...`);
+      console.log(`Status: Direct SFTP uploading latest native deb (${localDeb}) to Linux Device...`);
       await sftpUploadFile(linuxConn, path.join(distDir, localDeb), '/tmp/omnishell.deb');
     }
 
