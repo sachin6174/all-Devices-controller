@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTerminalMaximizeHandler();
   setupRemoteDesktopSessionHandler();
   setupRdSidebarScraper();
+  setupGoogleMultiAccountHandlers();
   setupRouterAutoLogin();
 
   // Platform Detection for Native Styling (macOS, Windows, Linux)
@@ -1100,51 +1101,61 @@ const INITIAL_RD_SESSIONS = [
   { name: 'SACHIN-ART-WINDOWS',   sessionId: 'a228a061-18b5-0971-aadb-108c81833c49' }
 ];
 
-// ── Chrome Remote Desktop session scraper (100% Dynamic HTML DOM Scraper) ────
+// ── Chrome Remote Desktop multi-account session scraper (Sweeps authuser=0..5) ──
 const RD_SCRAPE_SCRIPT = `
-(function() {
+(async function() {
   try {
-    if (!location.href.includes('/access') || location.href.includes('/access/session/')) {
-      return JSON.stringify([]);
-    }
-
     const results = [];
     const seenIds = new Set();
-    const queue = [document.body || document.documentElement];
-    let count = 0;
 
-    while (queue.length > 0 && count < 800) {
-      const node = queue.shift();
-      if (!node) continue;
-      count++;
+    function parseHostNodes(rootNode, authUserIndex) {
+      if (!rootNode) return;
+      const queue = [rootNode];
+      let count = 0;
+      while (queue.length > 0 && count < 800) {
+        const node = queue.shift();
+        if (!node) continue;
+        count++;
 
-      // Check direct link elements or host cards containing /access/session/<id>
-      const href = node.href || (node.getAttribute && node.getAttribute('href')) || '';
-      const m = href.match(/\\/access\\/session\\/([^/?#]+)/);
-      if (m) {
-        const sessionId = m[1];
-        if (!seenIds.has(sessionId)) {
-          seenIds.add(sessionId);
+        const href = node.href || (node.getAttribute && node.getAttribute('href')) || '';
+        const m = href.match(/\\/access\\/session\\/([^/?#]+)/);
+        if (m) {
+          const sessionId = m[1];
+          if (!seenIds.has(sessionId)) {
+            seenIds.add(sessionId);
 
-          // Get exact host name from innerText of the target card element
-          let rawText = (node.innerText || node.textContent || '').trim();
-          let lines = rawText.split('\\n').map(s => s.trim()).filter(Boolean);
-          let name = lines[0] || 'Remote Host';
+            let rawText = (node.innerText || node.textContent || '').trim();
+            let lines = rawText.split('\\n').map(s => s.trim()).filter(Boolean);
+            let name = lines[0] || 'Remote Host';
+            name = name.replace(/^(Online|Offline|Connecting|Remote Host)\\s*/i, '').trim() || name;
+            results.push({ name, sessionId, authUser: authUserIndex });
+          }
+        }
 
-          // Clean up action labels
-          name = name.replace(/^(Online|Offline|Connecting|Remote Host)\\s*/i, '').trim() || name;
-          results.push({ name, sessionId });
+        if (node.children) {
+          for (let i = 0; i < node.children.length; i++) {
+            const child = node.children[i];
+            queue.push(child);
+            if (child.shadowRoot) queue.push(child.shadowRoot);
+          }
         }
       }
+    }
 
-      // Traversal for deep Shadow DOM elements in polymer/web-components
-      if (node.children) {
-        for (let i = 0; i < node.children.length; i++) {
-          const child = node.children[i];
-          queue.push(child);
-          if (child.shadowRoot) queue.push(child.shadowRoot);
+    // 1. Parse current DOM (active page)
+    parseHostNodes(document.body || document.documentElement, 0);
+
+    // 2. Fetch /access?authuser=0..5 in background to sweep all logged-in Google accounts!
+    for (let u = 0; u <= 5; u++) {
+      try {
+        const res = await fetch('https://remotedesktop.google.com/access?authuser=' + u, { credentials: 'include' });
+        if (res.ok) {
+          const html = await res.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          parseHostNodes(doc.body || doc.documentElement, u);
         }
-      }
+      } catch(e) {}
     }
 
     return JSON.stringify(results);
@@ -1247,10 +1258,11 @@ function closeRemoteSession(id) {
 }
 
 function openRemoteDesktopSession(sessionData) {
-  const { name, sessionId } = sessionData;
-  const id = `rd_${sessionId}`;
+  const { name, sessionId, authUser } = sessionData;
+  const u = (authUser !== undefined && authUser !== null) ? authUser : 0;
+  const id = `rd_${sessionId}_acc${u}`;
   const icon = guessOsIcon(name);
-  const targetUrl = `https://remotedesktop.google.com/access/session/${sessionId}`;
+  const targetUrl = `https://remotedesktop.google.com/access/session/${sessionId}?authuser=${u}`;
 
   if (activeRemoteSessionsMap.has(id)) {
     switchRemoteSession(id);
@@ -1397,14 +1409,17 @@ function renderRdSidebarSessions(sessions) {
   sidebarList.innerHTML = '';
   displaySessions.forEach(s => {
     const icon = guessOsIcon(s.name);
+    const u = (s.authUser !== undefined && s.authUser !== null) ? s.authUser : 0;
     const card = document.createElement('div');
     card.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:all 0.18s;';
     card.innerHTML = `
       <span style="font-size:13px;flex-shrink:0;">${icon}</span>
       <div style="overflow:hidden;min-width:0;flex:1;">
-        <div style="font-size:10px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.name}</div>
-        <div style="font-size:8px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.sessionId.slice(0,16)}</div>
-      </div>`;
+        <div style="font-size:10px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.name)}</div>
+        <div style="font-size:8px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.sessionId.slice(0,14)} • Acc #${u}</div>
+      </div>
+      <span style="font-size:8px;background:rgba(139,92,246,0.15);color:#a78bfa;padding:2px 5px;border-radius:4px;border:1px solid rgba(139,92,246,0.25);flex-shrink:0;">Acc #${u}</span>
+    `;
 
     card.addEventListener('mouseenter', () => { card.style.background = 'rgba(139,92,246,0.08)'; card.style.borderColor = 'rgba(139,92,246,0.25)'; });
     card.addEventListener('mouseleave', () => { card.style.background = 'rgba(255,255,255,0.02)'; card.style.borderColor = 'rgba(255,255,255,0.04)'; });
@@ -1448,6 +1463,26 @@ function setupRdSidebarScraper() {
   });
 
   if (refreshBtn) refreshBtn.addEventListener('click', scrape);
+}
+
+// ── Google Multi-Account Handlers ───────────────────────────────────────────
+function setupGoogleMultiAccountHandlers() {
+  const btnAddAcc = document.getElementById('btn-add-google-account');
+  const btnOpenRd = document.getElementById('btn-open-rd-portal');
+  const wvChromeLogin = document.getElementById('wv-chrome-login');
+
+  if (btnAddAcc && wvChromeLogin) {
+    btnAddAcc.addEventListener('click', () => {
+      activateTab('chrome-login');
+      wvChromeLogin.loadURL('https://accounts.google.com/AddSession?hl=en');
+    });
+  }
+
+  if (btnOpenRd) {
+    btnOpenRd.addEventListener('click', () => {
+      activateTab('remote-desktop');
+    });
+  }
 }
 
 // ── Sidebar Scan Button ──────────────────────────────────────────────────────

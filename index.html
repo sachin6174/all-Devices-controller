@@ -264,10 +264,22 @@
 
       <!-- TAB 2: GOOGLE LOGIN -->
       <div class="tab-content" id="tab-content-chrome-login" style="display: none; flex: 1; flex-direction: column; gap: 10px;">
-        <div class="webview-control-bar" style="display: flex; justify-content: flex-end; padding: 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); flex-shrink: 0;">
-          <button class="tab-button btn-reload-webview" data-webview-id="wv-chrome-login" style="padding: 6px 12px; font-size: 11px; font-weight: 500; display: flex; align-items: center; gap: 6px; border-radius: 6px; cursor: pointer; background: rgba(255, 255, 255, 0.015);">
-            🔄 Reload Portal
-          </button>
+        <div class="webview-control-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 14px;">🔑</span>
+            <span style="font-size: 11px; font-weight: 600; color: var(--text-primary);">Google Multi-Account Manager</span>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button id="btn-add-google-account" style="padding: 5px 11px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.35); color: #a78bfa; transition: all 0.18s;" onmouseover="this.style.background='rgba(139,92,246,0.25)'" onmouseout="this.style.background='rgba(139,92,246,0.15)'">
+              ➕ Add Another Account
+            </button>
+            <button id="btn-open-rd-portal" style="padding: 5px 11px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.35); color: #34d399; transition: all 0.18s;" onmouseover="this.style.background='rgba(16,185,129,0.25)'" onmouseout="this.style.background='rgba(16,185,129,0.15)'">
+              🖥️ Remote Desktop Portal
+            </button>
+            <button class="tab-button btn-reload-webview" data-webview-id="wv-chrome-login" style="padding: 5px 11px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; background: rgba(255, 255, 255, 0.03);">
+              🔄 Reload Portal
+            </button>
+          </div>
         </div>
         <webview id="wv-chrome-login" src="https://accounts.google.com/ServiceLogin?hl=en" partition="persist:google-session" useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0" style="width: 100%; height: 100%; border: none; border-radius: 12px; background: #0c0a18; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);"></webview>
       </div>
