@@ -281,7 +281,11 @@ async function main() {
       });
 
       console.log('Status: Executing macOS & Linux electron-builder on MacBook...');
-      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null || security unlock-keychain -p "${config.ssh.mac.pass}" login.keychain 2>/dev/null; cd "${macRemoteDir}" && CSC_IDENTITY_AUTO_DISCOVERY=false npm install && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux`;
+      let appleEnv = '';
+      if (config.apple && config.apple.email && config.apple.app_specific_passwords && config.apple.app_specific_passwords.OmniShell) {
+        appleEnv = `APPLE_ID="${config.apple.email}" APPLE_APP_SPECIFIC_PASSWORD="${config.apple.app_specific_passwords.OmniShell}" APPLE_TEAM_ID="${config.apple.team_id || ''}" `;
+      }
+      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null || security unlock-keychain -p "${config.ssh.mac.pass}" login.keychain 2>/dev/null; cd "${macRemoteDir}" && ${appleEnv}CSC_IDENTITY_AUTO_DISCOVERY=false npm install && ${appleEnv}CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux`;
       await sshRunCommand(macConn, macCmd);
       console.log('Success: macOS and Linux binaries compiled on MacBook!');
 

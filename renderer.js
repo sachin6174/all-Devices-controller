@@ -1074,38 +1074,51 @@ function setupRemoteDesktopSessionHandler() {
   }
 }
 
-// ── Default Known Remote Desktop Sessions (rendered immediately on boot) ──────
+// ── Default Known Remote Desktop Sessions (Fallback before live HTML scraping) ──
 const INITIAL_RD_SESSIONS = [
-  { name: 'SACHIN-ART-MACINTOSH', sessionId: '8b87e43d-67c5-4867-83d8-e08dad50b049' },
-  { name: 'SACHIN-ART-LINUX',     sessionId: '3cbd335a-73e9-ca99-2208-f6ce757df023' },
+  { name: 'SACHIN-ART-MACINTOSH', sessionId: '3cbd335a-73e9-ca99-2208-f6ce757df023' },
+  { name: 'SACHIN-ART-LINUX',     sessionId: '8b87e43d-67c5-4867-83d8-e08dad50b049' },
   { name: 'SACHIN-ART-WINDOWS',   sessionId: 'a228a061-18b5-0971-aadb-108c81833c49' }
 ];
 
-// ── Chrome Remote Desktop session scraper (Deep Shadow DOM aware) ────────────
+// ── Chrome Remote Desktop session scraper (100% Dynamic HTML DOM Scraper) ────
 const RD_SCRAPE_SCRIPT = `
 (function() {
   try {
-    const knownMap = [
-      { key: 'MACINTOSH', name: 'SACHIN-ART-MACINTOSH', sessionId: '8b87e43d-67c5-4867-83d8-e08dad50b049' },
-      { key: 'LINUX',     name: 'SACHIN-ART-LINUX',     sessionId: '3cbd335a-73e9-ca99-2208-f6ce757df023' },
-      { key: 'WINDOWS',   name: 'SACHIN-ART-WINDOWS',   sessionId: 'a228a061-18b5-0971-aadb-108c81833c49' }
-    ];
-
-    // Only scrape if on the access listing page
     if (!location.href.includes('/access') || location.href.includes('/access/session/')) {
       return JSON.stringify([]);
     }
 
     const results = [];
-    const allElements = [];
+    const seenIds = new Set();
     const queue = [document.body || document.documentElement];
     let count = 0;
 
-    while (queue.length > 0 && count < 600) {
+    while (queue.length > 0 && count < 800) {
       const node = queue.shift();
       if (!node) continue;
       count++;
-      allElements.push(node);
+
+      // Check direct link elements or host cards containing /access/session/<id>
+      const href = node.href || (node.getAttribute && node.getAttribute('href')) || '';
+      const m = href.match(/\\/access\\/session\\/([^/?#]+)/);
+      if (m) {
+        const sessionId = m[1];
+        if (!seenIds.has(sessionId)) {
+          seenIds.add(sessionId);
+
+          // Get exact host name from innerText of the target card element
+          let rawText = (node.innerText || node.textContent || '').trim();
+          let lines = rawText.split('\\n').map(s => s.trim()).filter(Boolean);
+          let name = lines[0] || 'Remote Host';
+
+          // Clean up action labels
+          name = name.replace(/^(Online|Offline|Connecting|Remote Host)\\s*/i, '').trim() || name;
+          results.push({ name, sessionId });
+        }
+      }
+
+      // Traversal for deep Shadow DOM elements in polymer/web-components
       if (node.children) {
         for (let i = 0; i < node.children.length; i++) {
           const child = node.children[i];
@@ -1115,38 +1128,7 @@ const RD_SCRAPE_SCRIPT = `
       }
     }
 
-    // Direct href session ID check
-    allElements.forEach(el => {
-      try {
-        const href = el.href || el.getAttribute?.('href') || '';
-        const m = href.match(/\\/access\\/session\\/([^/?#]+)/);
-        if (m) {
-          const sessionId = m[1];
-          if (!results.some(r => r.sessionId === sessionId)) {
-            const matchedKnown = knownMap.find(k => k.sessionId === sessionId);
-            const name = matchedKnown ? matchedKnown.name : ((el.innerText || el.textContent || '').trim().split('\\n')[0].slice(0, 60) || 'Remote Host');
-            results.push({ name, sessionId });
-          }
-        }
-      } catch(e) {}
-    });
-
-    // Known hosts check
-    knownMap.forEach(item => {
-      if (!results.some(r => r.sessionId === item.sessionId)) {
-        const found = allElements.some(el => {
-          try {
-            const text = (el.innerText || el.textContent || '').toUpperCase();
-            return text.includes(item.key) && (text.includes('ONLINE') || text.includes('SACHIN'));
-          } catch(e) { return false; }
-        });
-        if (found) {
-          results.push({ name: item.name, sessionId: item.sessionId });
-        }
-      }
-    });
-
-    return JSON.stringify(results.length > 0 ? results : knownMap);
+    return JSON.stringify(results);
   } catch(e) {
     return JSON.stringify([]);
   }
