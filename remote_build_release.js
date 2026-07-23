@@ -385,13 +385,14 @@ async function main() {
   const existingAssets = fs.readdirSync(localDistDir)
     .filter(f => {
       const lower = f.toLowerCase();
-      return (lower.endsWith('.exe') || lower.endsWith('.zip') || lower.endsWith('.dmg') || lower.endsWith('.appimage') || lower.endsWith('.deb'))
+      return f.includes(version)
+        && (lower.endsWith('.exe') || lower.endsWith('.zip') || lower.endsWith('.dmg') || lower.endsWith('.appimage') || lower.endsWith('.deb'))
         && !lower.endsWith('.blockmap')
         && fs.statSync(path.join(localDistDir, f)).isFile();
     })
     .map(f => path.join(localDistDir, f));
 
-  console.log(`Found ${existingAssets.length} production assets:`, existingAssets.map(f => path.basename(f)));
+  console.log(`Found ${existingAssets.length} production assets for version ${version}:`, existingAssets.map(f => path.basename(f)));
 
   if (githubToken) {
     await publishGithubRelease(
