@@ -138,34 +138,52 @@ async function main() {
   }
 
   // 3. Install on Linux Device via SSH + AppImage + Desktop Shortcut + Auto-Launch
-  console.log('\n[3/3] Installing OmniShell on Linux Device (192.168.1.17) with Desktop Shortcut & Auto-Launch...');
+  console.log('\n[3/3] Installing OmniShell on Linux Device (192.168.1.17) with Desktop Icon & Shortcut...');
   try {
     const linuxConn = await connectSsh('192.168.1.17', linuxCreds.username, linuxCreds.pass);
     console.log('Success: Connected to Linux Device!');
+    const localCfg = path.join(__dirname, 'sachin-person.cfg');
     await sftpUploadFile(linuxConn, localCfg, '/home/test/sachin-person.cfg');
+
+    const iconPath = path.join(__dirname, 'build', 'icon.png');
+    await sshExec(linuxConn, 'mkdir -p /home/test/.local/share/icons /home/test/Desktop');
+    await sftpUploadFile(linuxConn, iconPath, '/home/test/.local/share/icons/omnishell.png');
+
+    // Directly SFTP upload compiled AppImage and .deb binaries from local dist/ to Linux device
+    const localAppImage = files.find(f => f.endsWith('.AppImage'));
+    const localDeb      = files.find(f => f.endsWith('.deb'));
+
+    if (localAppImage) {
+      console.log(`Status: Direct SFTP uploading ${localAppImage} to Linux Desktop...`);
+      await sftpUploadFile(linuxConn, path.join(distDir, localAppImage), '/home/test/Desktop/OmniShell.AppImage');
+      await sftpUploadFile(linuxConn, path.join(distDir, localAppImage), '/home/test/Desktop/OmniShell');
+      console.log('Success: Direct SFTP uploaded OmniShell.AppImage to Linux Desktop!');
+    }
+
+    if (localDeb) {
+      console.log(`Status: Direct SFTP uploading ${localDeb} to Linux Device...`);
+      await sftpUploadFile(linuxConn, path.join(distDir, localDeb), '/tmp/omnishell.deb');
+    }
 
     const pass = linuxCreds.pass;
     const installCmd = `
       export PATH=$PATH:/usr/local/bin:/usr/bin:/bin;
-      deb=$(find /tmp/omnishell-build-* -name "*.deb" 2>/dev/null | tail -n 1);
-      appimage=$(find /tmp/omnishell-build-* -name "*.AppImage" 2>/dev/null | tail -n 1);
-
-      if [ -n "$deb" ]; then
-        echo "Installing Debian package $deb...";
-        echo "${pass}" | sudo -S dpkg -i "$deb" 2>/dev/null || echo "${pass}" | sudo -S apt-get install -f -y 2>/dev/null;
+      if [ -f /tmp/omnishell.deb ]; then
+        echo "Installing Debian package /tmp/omnishell.deb...";
+        echo "${pass}" | sudo -S dpkg -i /tmp/omnishell.deb 2>/dev/null || echo "${pass}" | sudo -S apt-get install -f -y 2>/dev/null;
       fi
 
-      # Always provision standalone AppImage executable to ~/Desktop/OmniShell.AppImage & ~/Desktop/OmniShell
-      mkdir -p ~/Desktop;
-      if [ -n "$appimage" ]; then
-        cp "$appimage" ~/Desktop/OmniShell.AppImage;
-        cp "$appimage" ~/Desktop/OmniShell;
-        echo "${pass}" | sudo -S cp "$appimage" /usr/local/bin/omnishell 2>/dev/null || true;
+      mkdir -p ~/Desktop ~/.local/share/icons;
+      echo "${pass}" | sudo -S cp /home/test/.local/share/icons/omnishell.png /usr/share/pixmaps/omnishell.png 2>/dev/null || true;
+
+      # Make AppImage executables executable (chmod +x)
+      if [ -f ~/Desktop/OmniShell.AppImage ]; then
+        echo "${pass}" | sudo -S cp ~/Desktop/OmniShell.AppImage /usr/local/bin/omnishell 2>/dev/null || true;
         chmod +x ~/Desktop/OmniShell.AppImage ~/Desktop/OmniShell /usr/local/bin/omnishell 2>/dev/null || true;
-        echo "Success: Deployed ~/Desktop/OmniShell.AppImage!";
+        echo "Success: Set executable permissions on ~/Desktop/OmniShell.AppImage!";
       fi
 
-      # Create Linux Desktop Shortcut (.desktop file)
+      # Create Linux Desktop Shortcut (.desktop file) with custom Icon
       cat << 'EOF' > ~/Desktop/omnishell.desktop
 [Desktop Entry]
 Version=1.0
@@ -173,11 +191,14 @@ Type=Application
 Name=OmniShell
 Comment=OmniShell Network Controller
 Exec=/home/test/Desktop/OmniShell.AppImage %U
-Icon=omnishell
+Icon=/home/test/.local/share/icons/omnishell.png
 Terminal=false
-Categories=Utility;
+StartupNotify=true
+Categories=Utility;Application;
 EOF
       chmod +x ~/Desktop/omnishell.desktop;
+      gio set ~/Desktop/omnishell.desktop metadata::trusted true 2>/dev/null || true;
+      echo "Success: Created Linux Desktop Shortcut with Icon (~/Desktop/omnishell.desktop)!";
       gio set ~/Desktop/omnishell.desktop metadata::trusted true 2>/dev/null || true;
       echo "Success: Created Linux Desktop Shortcut (~/Desktop/omnishell.desktop)!";
 
