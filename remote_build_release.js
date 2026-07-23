@@ -29,10 +29,12 @@ console.log(`Mac Credentials: ${config.ssh.mac.username}@192.168.1.5`);
 console.log(`Linux Credentials: ${config.ssh.linux.username}@192.168.1.10`);
 console.log('--------------------------------------------------');
 
-// Helper: Run remote SSH command
+// Helper: Run remote SSH command with PATH environment resolution
 function sshRunCommand(sshClient, cmd) {
   return new Promise((resolve, reject) => {
-    sshClient.exec(cmd, (err, stream) => {
+    const envPrefix = 'export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:/usr/bin:/bin:/snap/bin; ';
+    const fullCmd = `${envPrefix}${cmd}`;
+    sshClient.exec(fullCmd, (err, stream) => {
       if (err) return reject(err);
       let stdout = '';
       let stderr = '';
