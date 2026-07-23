@@ -32,8 +32,9 @@ console.log('--------------------------------------------------');
 // Helper: Run remote SSH command with PATH environment resolution
 function sshRunCommand(sshClient, cmd) {
   return new Promise((resolve, reject) => {
-    const envPrefix = 'export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:/usr/bin:/bin:/snap/bin; ';
-    const fullCmd = `${envPrefix}${cmd}`;
+    const envPrefix = 'export PATH=$PATH:/Users/sachinkumar/nodejs/bin:/home/test/nodejs/bin:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:~/.local/bin:/usr/bin:/bin:/snap/bin; ';
+    const escapedCmd = cmd.replace(/"/g, '\\"');
+    const fullCmd = `bash -l -c "${envPrefix}${escapedCmd}"`;
     sshClient.exec(fullCmd, (err, stream) => {
       if (err) return reject(err);
       let stdout = '';
