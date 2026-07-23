@@ -244,7 +244,25 @@ function renderDevices(devices) {
     return;
   }
 
+  // Known IP friendly name overrides
+  const knownIpMap = {
+    '192.168.1.17': { name: 'SACHIN-ART-LINUX', os: 'linux' },
+    '192.168.1.15': { name: 'SACHIN-ART-MACBOOK', os: 'mac' },
+    '192.168.1.4':  { name: 'SACHIN-ART-WINDOWS', os: 'windows' },
+    '192.168.1.5':  { name: 'SACHIN-ART-ANDROID', os: 'android' },
+    '192.168.1.1':  { name: 'ROUTER-GATEWAY', os: 'router' }
+  };
+
   devices.forEach(device => {
+    if (knownIpMap[device.ip]) {
+      if (!device.name || device.name.startsWith('Unknown') || device.name.includes(':')) {
+        device.name = knownIpMap[device.ip].name;
+      }
+      if (knownIpMap[device.ip].os) {
+        device.os = knownIpMap[device.ip].os;
+      }
+    }
+
     const row = document.createElement('div');
     row.className = `device-list-item ${device.os} ${device.sshOpen ? 'ssh-open' : 'ssh-closed'} ${device.isLocal ? 'local-host' : ''}`;
     row.dataset.ip = device.ip;
@@ -253,6 +271,7 @@ function renderDevices(devices) {
     if (device.os === 'linux') osIcon = '🐧';
     else if (device.os === 'mac') osIcon = '🍏';
     else if (device.os === 'windows') osIcon = '🪟';
+    else if (device.os === 'android') osIcon = '🍏'; // Green apple / phone icon
 
     row.innerHTML = `
       <div class="device-icon-side" title="${device.os.toUpperCase()}">${osIcon}</div>
