@@ -292,19 +292,20 @@ async function main() {
           if (err) { resolve(); return; }
           sftp.readdir(`${macRemoteDir}/dist`, async (rErr, files) => {
             if (!rErr && files) {
+              const downloadPromises = [];
               for (const f of files) {
                 const fn = f.filename;
                 if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage')) {
                   const remoteF = `${macRemoteDir}/dist/${fn}`;
                   const localF  = path.join(localDistDir, fn);
-                  try {
-                    await sftpDownload(sftp, remoteF, localF);
-                    console.log(`Success: Downloaded ${fn}`);
-                  } catch(e) {
-                    console.warn(`Download skipped for ${fn}:`, e.message);
-                  }
+                  downloadPromises.push(
+                    sftpDownload(sftp, remoteF, localF)
+                      .then(() => console.log(`Success: Downloaded ${fn}`))
+                      .catch(e => console.warn(`Download error for ${fn}:`, e.message))
+                  );
                 }
               }
+              await Promise.all(downloadPromises);
             }
             resolve();
           });
