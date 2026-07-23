@@ -40,6 +40,7 @@ build/*.pem
 # App Store Connect API keys (notarization) — same severity as the above
 *.p8
 AuthKey_*.p8
+setup_mac_notarization.js
 
 # ── Node.js ──────────────────────────────────────────────────────────────────
 node_modules/
