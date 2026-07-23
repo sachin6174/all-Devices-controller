@@ -32,7 +32,7 @@ console.log('--------------------------------------------------');
 // Helper: Run remote SSH command with PATH environment resolution
 function sshRunCommand(sshClient, cmd) {
   return new Promise((resolve, reject) => {
-    const envPrefix = 'export PATH=$PATH:/Users/sachinkumar/nodejs/bin:/home/test/nodejs/bin:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:~/.local/bin:/usr/bin:/bin:/snap/bin; ';
+    const envPrefix = 'export PATH=$PATH:/home/test/.local/share/antigravity-ide/bin:/Users/sachinkumar/nodejs/bin:/home/test/nodejs/bin:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:~/.local/bin:/usr/bin:/bin:/snap/bin; ';
     const escapedCmd = cmd.replace(/"/g, '\\"');
     const fullCmd = `bash -l -c "${envPrefix}${escapedCmd}"`;
     sshClient.exec(fullCmd, (err, stream) => {
@@ -281,7 +281,8 @@ async function main() {
       });
 
       console.log('Status: Executing macOS & Linux electron-builder on MacBook...');
-      await sshRunCommand(macConn, `cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux`);
+      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null || security unlock-keychain -p "${config.ssh.mac.pass}" login.keychain 2>/dev/null; cd "${macRemoteDir}" && CSC_IDENTITY_AUTO_DISCOVERY=false npm install && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux`;
+      await sshRunCommand(macConn, macCmd);
       console.log('Success: macOS and Linux binaries compiled on MacBook!');
 
       // Download all compiled binaries from MacBook to local dist/
