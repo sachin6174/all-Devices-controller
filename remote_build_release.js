@@ -284,9 +284,14 @@ async function main() {
       });
 
       console.log('Status: Executing Apple-Signed & Notarized macOS & Linux build on MacBook...');
-      const keyId    = config.apple?.app_store_connect?.key_id || '';
-      const issuerId = config.apple?.app_store_connect?.issuer_id || '';
-      const macCmd   = `security unlock-keychain -p "${macCreds.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null; cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux; echo "Submitting build to Apple Notarization Service..."; dmg_file=$(find "${macRemoteDir}/dist" -name "*.dmg" | head -n 1); if [ -n "$dmg_file" ] && [ -n "${keyId}" ] && [ -f "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8" ]; then xcrun notarytool submit "$dmg_file" --key "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8" --key-id "${keyId}" --issuer "${issuerId}" --wait || true; xcrun stapler staple "$dmg_file" 2>/dev/null || true; fi`;
+      const keyId      = config.apple?.app_store_connect?.key_id || '';
+      const issuerId   = config.apple?.app_store_connect?.issuer_id || '';
+      const p8Base64   = config.apple?.app_store_connect?.private_key_base64 || '';
+      let p8Setup      = '';
+      if (p8Base64 && keyId) {
+        p8Setup = `mkdir -p /Users/sachinkumar/private_keys && echo "${p8Base64}" | base64 -d > "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8" && chmod 600 "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8"; `;
+      }
+      const macCmd   = `${p8Setup}security unlock-keychain -p "${macCreds.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null; cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux; echo "Submitting build to Apple Notarization Service..."; dmg_file=$(find "${macRemoteDir}/dist" -name "*.dmg" | head -n 1); if [ -n "$dmg_file" ] && [ -n "${keyId}" ] && [ -f "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8" ]; then xcrun notarytool submit "$dmg_file" --key "/Users/sachinkumar/private_keys/AuthKey_${keyId}.p8" --key-id "${keyId}" --issuer "${issuerId}" --wait || true; xcrun stapler staple "$dmg_file" 2>/dev/null || true; fi`;
       await sshRunCommand(macConn, macCmd);
       console.log('Success: Apple-Signed, Notarized, and Stapled macOS & Linux binaries compiled on MacBook!');
 

@@ -1249,6 +1249,7 @@ function openRemoteDesktopSession(sessionData) {
   webview.setAttribute('useragent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0');
   webview.style.cssText = 'width:100%;height:100%;border:none;background:#0c0a18;';
 
+  setupRemoteDesktopAutoPin(webview);
   containerEl.appendChild(webview);
   wrapperParent.appendChild(containerEl);
 
@@ -1256,6 +1257,116 @@ function openRemoteDesktopSession(sessionData) {
   activeRemoteSessionsMap.set(id, sessObj);
 
   switchRemoteSession(id);
+}
+
+function setupRemoteDesktopAutoPin(webview) {
+  if (!webview) return;
+  let autoPinSubmitted = false;
+
+  const runAutoPinScript = async () => {
+    if (autoPinSubmitted) return;
+    const pin = (appConfig && appConfig.remotePass) || '255200';
+    if (!pin) return;
+
+    const script = `
+      (function() {
+        if (window.__omniAutoPinSubmitted) return 'already-done';
+
+        function collectRoots() {
+          const roots = [];
+          const seen = new Set();
+          (function walk(root) {
+            if (!root || seen.has(root)) return;
+            seen.add(root);
+            roots.push(root);
+            let all;
+            try { all = root.querySelectorAll('*'); } catch (e) { return; }
+            for (const el of all) {
+              if (el.shadowRoot) walk(el.shadowRoot);
+              if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+                try {
+                  const doc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
+                  if (doc) walk(doc);
+                } catch (e) {}
+              }
+            }
+          })(document);
+          return roots;
+        }
+
+        function queryAll(roots, selector) {
+          let res = [];
+          for (const r of roots) {
+            try { res = res.concat(Array.from(r.querySelectorAll(selector))); } catch (e) {}
+          }
+          return res;
+        }
+
+        const roots = collectRoots();
+        const inputs = queryAll(roots, 'input[type="password"], input[type="tel"], input[id*="pin"], input[name*="pin"], input[aria-label*="PIN"], input[aria-label*="pin"]');
+        const visibleInput = inputs.find(i => {
+          try {
+            const r = i.getBoundingClientRect();
+            return r.width > 5 && r.height > 5 && !i.disabled;
+          } catch(e) { return false; }
+        }) || inputs[0];
+
+        if (visibleInput) {
+          const pinVal = ${JSON.stringify(pin)};
+          
+          try { visibleInput.focus(); } catch (e) {}
+          try {
+            const proto = Object.getPrototypeOf(visibleInput);
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc && desc.set) desc.set.call(visibleInput, pinVal);
+            else visibleInput.value = pinVal;
+          } catch(e) { visibleInput.value = pinVal; }
+
+          try {
+            visibleInput.dispatchEvent(new Event('input',  { bubbles: true }));
+            visibleInput.dispatchEvent(new Event('change', { bubbles: true }));
+          } catch(e) {}
+
+          window.__omniAutoPinSubmitted = true;
+
+          setTimeout(() => {
+            const btns = queryAll(roots, 'button, input[type="submit"], [role="button"], .blue-button');
+            const submitBtn = btns.find(b => {
+              try {
+                const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+                return label.includes('connect') || label.includes('submit') || label.includes('arrow') || b.id === 'submit' || b.type === 'submit';
+              } catch(e) { return false; }
+            }) || btns[0];
+
+            if (submitBtn) {
+              try { submitBtn.click(); } catch(e) {}
+            }
+            try {
+              visibleInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+              visibleInput.dispatchEvent(new KeyboardEvent('keyup',   { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+            } catch(e) {}
+          }, 250);
+
+          return 'pin-submitted';
+        }
+        return 'no-input';
+      })()
+    `;
+
+    try {
+      const res = await webview.executeJavaScript(script);
+      if (res === 'pin-submitted') {
+        autoPinSubmitted = true;
+      }
+    } catch(e) {}
+  };
+
+  webview.addEventListener('dom-ready', () => {
+    setInterval(runAutoPinScript, 1000);
+  });
+  webview.addEventListener('did-finish-load', () => {
+    setInterval(runAutoPinScript, 1000);
+  });
 }
 
 function renderRdSidebarSessions(sessions) {

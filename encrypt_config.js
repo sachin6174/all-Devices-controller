@@ -58,7 +58,8 @@ const slimConfig = {
     linux:   linuxCreds ? { username: linuxCreds.username, pass: linuxCreds.pass } : null,
     windows: winCreds   ? { username: winCreds.username,   pass: winCreds.pass   } : null,
   },
-  router: fullConfig?.router ? { username: fullConfig.router.username, password: fullConfig.router.password } : null
+  router: fullConfig?.router ? { username: fullConfig.router.username, password: fullConfig.router.password } : null,
+  remotePass: fullConfig?.remotePass || '255200'
 };
 
 console.log('--------------------------------------------------');
