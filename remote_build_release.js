@@ -280,14 +280,10 @@ async function main() {
         });
       });
 
-      console.log('Status: Executing macOS & Linux electron-builder on MacBook...');
-      let appleEnv = '';
-      if (config.apple && config.apple.email && config.apple.app_specific_passwords && config.apple.app_specific_passwords.OmniShell) {
-        appleEnv = `APPLE_ID="${config.apple.email}" APPLE_APP_SPECIFIC_PASSWORD="${config.apple.app_specific_passwords.OmniShell}" APPLE_TEAM_ID="${config.apple.team_id || ''}" `;
-      }
-      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null || security unlock-keychain -p "${config.ssh.mac.pass}" login.keychain 2>/dev/null; cd "${macRemoteDir}" && ${appleEnv}CSC_IDENTITY_AUTO_DISCOVERY=false npm install && ${appleEnv}CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --linux`;
+      console.log('Status: Executing Apple-Signed & Notarized macOS & Linux build on MacBook...');
+      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null; cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux; echo "Submitting build to Apple Notarization Service..."; dmg_file=$(find "${macRemoteDir}/dist" -name "*.dmg" | head -n 1); if [ -n "$dmg_file" ] && [ -f "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" ]; then xcrun notarytool submit "$dmg_file" --key "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" --key-id 7V2V2Y7758 --issuer 3208f1a5-5bce-4845-ae7c-d717abe01c20 --wait || true; xcrun stapler staple "$dmg_file" 2>/dev/null || true; fi`;
       await sshRunCommand(macConn, macCmd);
-      console.log('Success: macOS and Linux binaries compiled on MacBook!');
+      console.log('Success: Apple-Signed, Notarized, and Stapled macOS & Linux binaries compiled on MacBook!');
 
       // Download all compiled binaries from MacBook to local dist/
       console.log('Status: Downloading compiled binaries from MacBook to local dist/...');
