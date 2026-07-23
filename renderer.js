@@ -61,6 +61,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupRdSidebarScraper();
   setupRouterAutoLogin();
 
+  // Platform Detection for Native Styling (macOS, Windows, Linux)
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (userAgent.includes('mac')) {
+    document.body.classList.add('platform-mac');
+  } else if (userAgent.includes('linux')) {
+    document.body.classList.add('platform-linux');
+  } else {
+    document.body.classList.add('platform-windows');
+  }
+
   // Display App Version in Top Titlebar
   if (window.api && window.api.getAppVersion) {
     window.api.getAppVersion().then(ver => {
@@ -323,12 +333,115 @@ function connectDeviceInstantly(device) {
   }
 }
 
-function startSshSession(ip, osType, username, password) {
-  // Reset previous instances
-  destroyTerminalInstance();
+// ── Multi-Session Keyed Terminal Manager ──────────────────────────────────────
+const activeSshSessionsMap = new Map(); // sessionId -> { sessionId, ip, osType, username, xterm, fitAddon, containerEl, status }
+let activeSshSessionId = null;
 
-  // Create terminal
-  xtermInstance = new Terminal({
+function renderTerminalTabs() {
+  const tabsBar = document.getElementById('terminal-tabs-bar');
+  if (!tabsBar) return;
+  tabsBar.innerHTML = '';
+
+  activeSshSessionsMap.forEach((sess, sessId) => {
+    const tab = document.createElement('div');
+    tab.className = `session-tab-item ${sessId === activeSshSessionId ? 'active' : ''}`;
+    
+    const icon = sess.osType === 'mac' ? '🍎' : sess.osType === 'windows' ? '🪟' : '🐧';
+    tab.innerHTML = `
+      <span>${icon}</span>
+      <span class="session-tab-title">${sess.ip} (${sess.username})</span>
+      <span class="session-tab-close" title="Close Session">×</span>
+    `;
+
+    tab.addEventListener('click', (e) => {
+      if (e.target.classList.contains('session-tab-close')) {
+        e.stopPropagation();
+        closeSshSession(sessId);
+      } else {
+        switchSshSession(sessId);
+      }
+    });
+
+    tabsBar.appendChild(tab);
+  });
+}
+
+function switchSshSession(sessId) {
+  if (!activeSshSessionsMap.has(sessId)) return;
+  activeSshSessionId = sessId;
+
+  activeSshSessionsMap.forEach((sess, id) => {
+    if (id === sessId) {
+      sess.containerEl.style.display = 'block';
+      termHostTitle.textContent = `SSH Terminal - ${sess.ip}`;
+      termHostSub.textContent = `User: ${sess.username} | OS: ${sess.osType}`;
+      if (sess.fitAddon) {
+        setTimeout(() => {
+          sess.fitAddon.fit();
+          const dims = sess.fitAddon.proposeDimensions();
+          if (dims) window.api.sshResize(sessId, dims.cols, dims.rows);
+        }, 50);
+      }
+      if (sess.xterm) sess.xterm.focus();
+    } else {
+      sess.containerEl.style.display = 'none';
+    }
+  });
+
+  renderTerminalTabs();
+
+  // Show persistent drawer
+  if (sshTerminalDrawer) sshTerminalDrawer.style.display = 'flex';
+  const main = document.querySelector('.main-content');
+  if (main) main.style.paddingBottom = '330px';
+}
+
+function closeSshSession(sessId) {
+  if (!activeSshSessionsMap.has(sessId)) return;
+  const sess = activeSshSessionsMap.get(sessId);
+
+  window.api.sshDisconnect(sessId);
+
+  if (sess.xterm) {
+    try { sess.xterm.dispose(); } catch(e) {}
+  }
+  if (sess.containerEl && sess.containerEl.parentNode) {
+    sess.containerEl.parentNode.removeChild(sess.containerEl);
+  }
+
+  activeSshSessionsMap.delete(sessId);
+
+  if (activeSshSessionId === sessId) {
+    const remaining = Array.from(activeSshSessionsMap.keys());
+    if (remaining.length > 0) {
+      switchSshSession(remaining[remaining.length - 1]);
+    } else {
+      activeSshSessionId = null;
+      if (sshTerminalDrawer) sshTerminalDrawer.style.display = 'none';
+      const main = document.querySelector('.main-content');
+      if (main) main.style.paddingBottom = '';
+    }
+  }
+
+  renderTerminalTabs();
+}
+
+function startSshSession(ip, osType, username, password) {
+  const sessionId = `ssh_${ip}_${username}`;
+
+  // If session already exists, switch to it immediately!
+  if (activeSshSessionsMap.has(sessionId)) {
+    switchSshSession(sessionId);
+    return;
+  }
+
+  // Create per-session container wrapper
+  const containerEl = document.createElement('div');
+  containerEl.className = 'term-session-wrapper';
+  containerEl.style.cssText = 'width:100%;height:100%;display:none;';
+  terminalContainer.appendChild(containerEl);
+
+  const xterm = new Terminal({
     cursorBlink: true,
     fontSize: 14,
     fontFamily: varString('--font-mono'),
@@ -347,84 +460,71 @@ function startSshSession(ip, osType, username, password) {
     }
   });
 
-  fitAddonInstance = new FitAddon.FitAddon();
-  xtermInstance.loadAddon(fitAddonInstance);
-  xtermInstance.open(terminalContainer);
+  const fitAddon = new FitAddon.FitAddon();
+  xterm.loadAddon(fitAddon);
+  xterm.open(containerEl);
 
-  // Auto-copy highlighted text in the terminal to clipboard
-  xtermInstance.onSelectionChange(() => {
-    const selection = xtermInstance.getSelection();
-    if (selection) {
-      navigator.clipboard.writeText(selection);
+  xterm.onSelectionChange(() => {
+    const selection = xterm.getSelection();
+    if (selection) navigator.clipboard.writeText(selection);
+  });
+
+  xterm.onData((chunk) => {
+    window.api.sshData(sessionId, chunk);
+  });
+
+  const sessObj = { sessionId, ip, osType, username, xterm, fitAddon, containerEl, status: 'connecting' };
+  activeSshSessionsMap.set(sessionId, sessObj);
+
+  switchSshSession(sessionId);
+
+  // Connect via API with sessionId
+  window.api.sshConnect(sessionId, ip, osType, username, password);
+}
+
+// Global SSH Listeners
+if (window.api && window.api.onSshOutput) {
+  window.api.onSshOutput((payload) => {
+    const sessionId = typeof payload === 'object' ? payload.sessionId : activeSshSessionId;
+    const data = typeof payload === 'object' ? payload.data : payload;
+    const sess = activeSshSessionsMap.get(sessionId);
+    if (sess && sess.xterm) {
+      sess.xterm.write(data);
     }
   });
 
-  // Fit on load
-  setTimeout(() => {
-    if (fitAddonInstance) {
-      fitAddonInstance.fit();
-      const dims = fitAddonInstance.proposeDimensions();
-      if (dims) {
-        window.api.sshResize(dims.cols, dims.rows);
-      }
-    }
-  }, 100);
+  window.api.onSshState((payload) => {
+    const sessionId = typeof payload === 'object' ? payload.sessionId : activeSshSessionId;
+    const state = typeof payload === 'object' ? payload.state : payload;
+    const sess = activeSshSessionsMap.get(sessionId);
+    if (!sess) return;
 
-  // Pipe terminal input to IPC backend
-  xtermInstance.onData((chunk) => {
-    window.api.sshData(chunk);
-  });
-
-  // Listen to terminal output from main process
-  unsubscribeSshOutput = window.api.onSshOutput((data) => {
-    if (xtermInstance) {
-      xtermInstance.write(data);
-    }
-  });
-
-  // Listen to session state changes
-  unsubscribeSshState = window.api.onSshState((data) => {
-    if (data.state === 'connecting') {
-      connStatusDot.className = 'connection-status-dot connecting';
-      termHostSub.textContent = `Connecting to ${ip} as ${username}...`;
-      sshConnected = false;
-    } else if (data.state === 'connected') {
-      connStatusDot.className = 'connection-status-dot active';
-      termHostSub.textContent = `Connected to ${ip} as ${username}`;
-      xtermInstance.writeln('\x1b[1;36m[System] SSH Terminal Established. Ready to execute.\x1b[0m\r\n');
-      xtermInstance.focus();
-      sshConnected = true;
-    } else if (data.state === 'disconnected') {
-      connStatusDot.className = 'connection-status-dot';
-      termHostSub.textContent = 'Disconnected';
-      sshConnected = false;
-      if (xtermInstance) {
-        xtermInstance.writeln('\r\n\x1b[1;31m[System] Session Terminated by host or client.\x1b[0m');
-      }
-    } else if (data.state === 'error') {
-      connStatusDot.className = 'connection-status-dot';
-      termHostSub.textContent = `Error: ${data.error}`;
-      sshConnected = false;
-      if (xtermInstance) {
-        xtermInstance.writeln(`\r\n\x1b[1;31m[System Error] ${data.error}\x1b[0m`);
+    sess.status = state;
+    if (sessionId === activeSshSessionId) {
+      if (state === 'connecting') {
+        connStatusDot.className = 'connection-status-dot connecting';
+        termHostSub.textContent = `Connecting to ${sess.ip} as ${sess.username}...`;
+      } else if (state === 'connected') {
+        connStatusDot.className = 'connection-status-dot active';
+        termHostSub.textContent = `Connected to ${sess.ip} as ${sess.username}`;
+        if (sess.xterm) sess.xterm.writeln('\x1b[1;36m[System] SSH Session Established.\x1b[0m\r\n');
+      } else if (state === 'disconnected') {
+        connStatusDot.className = 'connection-status-dot';
+        termHostSub.textContent = 'Disconnected';
+        if (sess.xterm) sess.xterm.writeln('\r\n\x1b[1;31m[System] Session Terminated.\x1b[0m');
+      } else if (state === 'error') {
+        connStatusDot.className = 'connection-status-dot';
+        termHostSub.textContent = `Error: ${payload.error || 'Connection Failed'}`;
+        if (sess.xterm) sess.xterm.writeln(`\r\n\x1b[1;31m[System Error] ${payload.error}\x1b[0m`);
       }
     }
   });
-
-  // Launch connection
-  window.api.sshConnect(ip, osType, username, password);
 }
 
 function destroyTerminalInstance() {
-  if (unsubscribeSshOutput) { unsubscribeSshOutput(); unsubscribeSshOutput = null; }
-  if (unsubscribeSshState) { unsubscribeSshState(); unsubscribeSshState = null; }
-
-  if (xtermInstance) {
-    xtermInstance.dispose();
-    xtermInstance = null;
+  if (activeSshSessionId) {
+    closeSshSession(activeSshSessionId);
   }
-  fitAddonInstance = null;
-  terminalContainer.innerHTML = '';
 }
 
 function setupTerminalWorkspaceHandlers() {
@@ -825,6 +925,13 @@ function setupRemoteDesktopSessionHandler() {
     if (connectState) connectState.style.display = 'block';
     if (deviceLabel)  deviceLabel.textContent = 'Connecting to device...';
 
+    const id = 'android_mirror_session';
+    if (!activeRemoteSessionsMap.has(id)) {
+      const sessObj = { id, name: 'Android Mirror', icon: '📱', type: 'android', containerEl: mirrorPanel };
+      activeRemoteSessionsMap.set(id, sessObj);
+    }
+    switchRemoteSession(id);
+
     // Get device resolution for coordinate scaling
     androidDeviceInfo = await window.api.getAndroidInfo();
     if (androidDeviceInfo && deviceLabel) {
@@ -879,62 +986,90 @@ function setupRemoteDesktopSessionHandler() {
     });
   });
 
-  // ── Mouse Click & Drag/Swipe Control on Android Screen Image ─────────────
+  // ── Surface adb input failures so control problems are actually visible ───
+  if (window.api.onAndroidInputError) {
+    window.api.onAndroidInputError(msg => {
+      if (!deviceLabel) return;
+      deviceLabel.textContent = 'Input error: ' + msg;
+      deviceLabel.style.color = '#f87171';
+      clearTimeout(deviceLabel._errTimer);
+      deviceLabel._errTimer = setTimeout(() => {
+        deviceLabel.style.color = '';
+        if (androidDeviceInfo) deviceLabel.textContent = `${androidDeviceInfo.width} × ${androidDeviceInfo.height} · ADB`;
+      }, 2600);
+    });
+  }
+
+  // Map a viewport (client) point to real device pixels. The device coordinate
+  // space is the *frame's own* natural size — exactly what `adb screencap`
+  // produced and what `adb input tap` expects — so this stays correct across
+  // rotation, object-fit letterboxing, and any display-resolution override.
+  function mapToDevice(clientX, clientY) {
+    if (!screenImg) return null;
+    const rect = screenImg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const natW = screenImg.naturalWidth  || (androidDeviceInfo && androidDeviceInfo.width)  || 1080;
+    const natH = screenImg.naturalHeight || (androidDeviceInfo && androidDeviceInfo.height) || 2340;
+    // Rectangle the image actually occupies inside the element box (contain fit).
+    const scale = Math.min(rect.width / natW, rect.height / natH);
+    const dispW = natW * scale, dispH = natH * scale;
+    const offX  = rect.left + (rect.width  - dispW) / 2;
+    const offY  = rect.top  + (rect.height - dispH) / 2;
+    let relX = (clientX - offX) / dispW;
+    let relY = (clientY - offY) / dispH;
+    // Reject clicks that fall in the letterbox bars, but tolerate a hair of
+    // sub-pixel overshoot at the very edges (so edge/corner taps still register).
+    const EPS = 0.02;
+    if (relX < -EPS || relX > 1 + EPS || relY < -EPS || relY > 1 + EPS) return null;
+    relX = Math.max(0, Math.min(1, relX));
+    relY = Math.max(0, Math.min(1, relY));
+    return { x: Math.round(relX * natW), y: Math.round(relY * natH) };
+  }
+
+  // Small on-screen ripple so a tap is visibly acknowledged.
+  function showTapRipple(clientX, clientY) {
+    const dot = document.createElement('div');
+    dot.style.cssText =
+      'position:fixed;left:' + clientX + 'px;top:' + clientY + 'px;width:16px;height:16px;' +
+      'margin:-8px 0 0 -8px;border-radius:50%;background:rgba(74,222,128,0.55);' +
+      'border:2px solid #4ade80;pointer-events:none;z-index:9999;' +
+      'transition:transform .35s ease-out, opacity .35s ease-out;';
+    document.body.appendChild(dot);
+    requestAnimationFrame(() => { dot.style.transform = 'scale(2.6)'; dot.style.opacity = '0'; });
+    setTimeout(() => dot.remove(), 400);
+  }
+
+  // ── Mouse Click & Drag/Swipe control on the Android screen image ──────────
   if (screenImg) {
-    let isMouseDown = false;
-    let startClientX = 0, startClientY = 0;
-    let startTime = 0;
+    let mDown = false, downX = 0, downY = 0, downT = 0;
+
+    // Images are draggable by default; that native drag swallows the mouse
+    // events and breaks tapping. Disable it.
+    screenImg.draggable = false;
+    screenImg.addEventListener('dragstart', e => e.preventDefault());
 
     screenImg.addEventListener('mousedown', e => {
-      isMouseDown = true;
-      startClientX = e.clientX;
-      startClientY = e.clientY;
-      startTime = Date.now();
+      mDown = true; downX = e.clientX; downY = e.clientY; downT = Date.now();
       e.preventDefault();
     });
 
-    screenImg.addEventListener('mouseup', e => {
-      if (!isMouseDown) return;
-      isMouseDown = false;
+    // Listen on window so a swipe that ends *outside* the image still completes.
+    window.addEventListener('mouseup', e => {
+      if (!mDown) return;
+      mDown = false;
 
-      const rect = screenImg.getBoundingClientRect();
-      const endClientX = e.clientX;
-      const endClientY = e.clientY;
-      const duration = Math.min(1000, Math.max(150, Date.now() - startTime));
+      const start = mapToDevice(downX, downY);
+      if (!start) return;                 // press started in the letterbox — ignore
 
-      // Relative coordinates (0.0 to 1.0)
-      const relStartX = Math.max(0, Math.min(1, (startClientX - rect.left) / rect.width));
-      const relStartY = Math.max(0, Math.min(1, (startClientY - rect.top)  / rect.height));
-      const relEndX   = Math.max(0, Math.min(1, (endClientX - rect.left)   / rect.width));
-      const relEndY   = Math.max(0, Math.min(1, (endClientY - rect.top)    / rect.height));
-
-      // Device resolution (with fallback to natural image size or default 1080x2340)
-      const width  = (androidDeviceInfo && androidDeviceInfo.width)  || screenImg.naturalWidth  || 1080;
-      const height = (androidDeviceInfo && androidDeviceInfo.height) || screenImg.naturalHeight || 2340;
-
-      const x1 = Math.round(relStartX * width);
-      const y1 = Math.round(relStartY * height);
-      const x2 = Math.round(relEndX * width);
-      const y2 = Math.round(relEndY * height);
-
-      const dx = Math.abs(endClientX - startClientX);
-      const dy = Math.abs(endClientY - startClientY);
-
-      if (dx < 10 && dy < 10) {
-        // Simple click -> tap
-        window.api.androidTap(x1, y1);
+      const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+      if (moved < 8) {
+        window.api.androidTap(start.x, start.y);
+        showTapRipple(downX, downY);
       } else {
-        // Drag -> swipe gesture
-        if (window.api.androidSwipe) {
-          window.api.androidSwipe(x1, y1, x2, y2, duration);
-        } else {
-          window.api.androidTap(x2, y2);
-        }
+        const end = mapToDevice(e.clientX, e.clientY) || start;
+        const duration = Math.min(1200, Math.max(120, Date.now() - downT));
+        window.api.androidSwipe(start.x, start.y, end.x, end.y, duration);
       }
-    });
-
-    screenImg.addEventListener('mouseleave', () => {
-      isMouseDown = false;
     });
   }
 }
@@ -1028,12 +1163,121 @@ function guessOsIcon(name) {
   return '🖥️';
 }
 
+// ── Multi-Session Remote Desktop & Android Tab Manager ─────────────────────
+const activeRemoteSessionsMap = new Map(); // id -> { id, name, icon, type, containerEl, webview }
+let activeRemoteSessId = null;
+
+function renderRemoteTabs() {
+  const tabsBar = document.getElementById('rd-tabs-bar');
+  if (!tabsBar) return;
+  tabsBar.innerHTML = '';
+
+  activeRemoteSessionsMap.forEach((sess, id) => {
+    const tab = document.createElement('div');
+    tab.className = `session-tab-item ${id === activeRemoteSessId ? 'active' : ''}`;
+    tab.innerHTML = `
+      <span>${sess.icon}</span>
+      <span class="session-tab-title">${sess.name}</span>
+      <span class="session-tab-close" title="Close Remote Session">×</span>
+    `;
+
+    tab.addEventListener('click', (e) => {
+      if (e.target.classList.contains('session-tab-close')) {
+        e.stopPropagation();
+        closeRemoteSession(id);
+      } else {
+        switchRemoteSession(id);
+      }
+    });
+
+    tabsBar.appendChild(tab);
+  });
+}
+
+function switchRemoteSession(id) {
+  if (!activeRemoteSessionsMap.has(id)) return;
+  activeRemoteSessId = id;
+
+  const defaultWrapper = document.getElementById('rd-webview-wrapper');
+  const mirrorPanel = document.getElementById('android-mirror-panel');
+  if (defaultWrapper) defaultWrapper.style.display = 'none';
+  if (mirrorPanel) mirrorPanel.style.display = 'none';
+
+  activeRemoteSessionsMap.forEach((sess, sessId) => {
+    if (sessId === id) {
+      sess.containerEl.style.display = 'flex';
+      if (sess.type === 'android' && mirrorPanel) {
+        mirrorPanel.style.display = 'flex';
+      }
+    } else {
+      sess.containerEl.style.display = 'none';
+    }
+  });
+
+  renderRemoteTabs();
+}
+
+function closeRemoteSession(id) {
+  if (!activeRemoteSessionsMap.has(id)) return;
+  const sess = activeRemoteSessionsMap.get(id);
+
+  if (sess.type === 'android' && stopMirrorGlobal) {
+    try { stopMirrorGlobal(); } catch(e) {}
+  }
+
+  if (sess.containerEl && sess.containerEl.parentNode) {
+    sess.containerEl.parentNode.removeChild(sess.containerEl);
+  }
+
+  activeRemoteSessionsMap.delete(id);
+
+  if (activeRemoteSessId === id) {
+    const remaining = Array.from(activeRemoteSessionsMap.keys());
+    if (remaining.length > 0) {
+      switchRemoteSession(remaining[remaining.length - 1]);
+    } else {
+      activeRemoteSessId = null;
+      const defaultWrapper = document.getElementById('rd-webview-wrapper');
+      if (defaultWrapper) defaultWrapper.style.display = 'flex';
+    }
+  }
+
+  renderRemoteTabs();
+}
+
+function openRemoteDesktopSession(sessionData) {
+  const { name, sessionId } = sessionData;
+  const id = `rd_${sessionId}`;
+  const icon = guessOsIcon(name);
+  const targetUrl = `https://remotedesktop.google.com/access/session/${sessionId}`;
+
+  if (activeRemoteSessionsMap.has(id)) {
+    switchRemoteSession(id);
+    return;
+  }
+
+  const wrapperParent = document.getElementById('tab-content-remote-desktop');
+  const containerEl = document.createElement('div');
+  containerEl.className = 'rd-session-container';
+  containerEl.style.cssText = 'flex:1;min-width:0;border-radius:12px;overflow:hidden;background:#0c0a18;box-shadow:0 8px 32px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.05);display:flex;flex-direction:column;';
+
+  const webview = document.createElement('webview');
+  webview.src = targetUrl;
+  webview.setAttribute('partition', 'persist:google-session');
+  webview.setAttribute('useragent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0');
+  webview.style.cssText = 'width:100%;height:100%;border:none;background:#0c0a18;';
+
+  containerEl.appendChild(webview);
+  wrapperParent.appendChild(containerEl);
+
+  const sessObj = { id, name, icon, type: 'rd', containerEl, webview, url: targetUrl };
+  activeRemoteSessionsMap.set(id, sessObj);
+
+  switchRemoteSession(id);
+}
+
 function renderRdSidebarSessions(sessions) {
   const sidebarList = document.getElementById('rd-sessions-sidebar-list');
-  const webview = document.getElementById('wv-remote-desktop');
-  const webviewWrap = document.getElementById('rd-webview-wrapper');
-  const mirrorPanel = document.getElementById('android-mirror-panel');
-
   if (!sidebarList) return;
 
   const displaySessions = (sessions && sessions.length > 0) ? sessions : INITIAL_RD_SESSIONS;
@@ -1055,12 +1299,7 @@ function renderRdSidebarSessions(sessions) {
 
     card.addEventListener('click', async () => {
       activateTab('remote-desktop');
-      if (stopMirrorGlobal) await stopMirrorGlobal();
-      if (mirrorPanel) mirrorPanel.style.display = 'none';
-      if (webviewWrap) webviewWrap.style.display = 'flex';
-      if (webview) {
-        webview.src = `https://remotedesktop.google.com/access/session/${s.sessionId}`;
-      }
+      openRemoteDesktopSession(s);
     });
 
     sidebarList.appendChild(card);

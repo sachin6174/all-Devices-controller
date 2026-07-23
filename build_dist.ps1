@@ -9,10 +9,14 @@ $major = [int]$versionParts[0]
 $minor = [int]$versionParts[1]
 $patch = [int]$versionParts[2]
 
-# Increment minor version and reset patch to 0
-$minor++
-$patch = 0
-$newVersion = "$major.$minor.$patch"
+# Use explicit version 2.0.0 if configured, otherwise auto-increment minor version
+if ($currentVersion -eq "2.0.0") {
+    $newVersion = "2.0.0"
+} else {
+    $minor++
+    $patch = 0
+    $newVersion = "$major.$minor.$patch"
+}
 
 # Update package.json version
 $packageJson.version = $newVersion

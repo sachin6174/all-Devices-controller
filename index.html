@@ -210,7 +210,9 @@
       </div>
 
       <!-- TAB 2: REMOTE DESKTOP -->
-      <div class="tab-content" id="tab-content-remote-desktop" style="display: none; flex: 1; overflow: hidden;">
+      <div class="tab-content" id="tab-content-remote-desktop" style="display: none; flex: 1; flex-direction: column; overflow: hidden;">
+        <!-- Multi-Session Remote Desktop Tab Bar -->
+        <div class="rd-tabs-bar" id="rd-tabs-bar" style="display:flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(0,0,0,0.3);border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;overflow-x:auto;"></div>
 
         <!-- WebView: Chrome Remote Desktop (full width) -->
         <div id="rd-webview-wrapper" style="flex: 1; min-width: 0; border-radius: 12px; overflow: hidden; background: #0c0a18; box-shadow: 0 8px 32px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05);">
@@ -303,6 +305,9 @@
                border-bottom:1px solid rgba(139,92,246,0.1);">
         <div style="width:32px;height:2px;border-radius:2px;background:rgba(139,92,246,0.4);"></div>
       </div>
+
+      <!-- Multi-Session Terminal Tab Bar -->
+      <div class="terminal-tabs-bar" id="terminal-tabs-bar" style="display:flex;align-items:center;gap:4px;padding:4px 12px;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.05);overflow-x:auto;flex-shrink:0;"></div>
 
       <!-- Terminal header (always visible) -->
       <div class="terminal-header" style="flex-shrink:0;padding:8px 16px;">

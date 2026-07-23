@@ -28,13 +28,29 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('scan-error', listener);
   },
 
-  // SSH Connection
-  sshConnect: (ip, osType, username, password) => {
-    ipcRenderer.send('ssh-connect', { ip, osType, username, password });
+  // Multi-Session Keyed SSH Connection
+  sshConnect: (sessionId, ip, osType, username, password) => {
+    if (typeof sessionId === 'object') {
+      ipcRenderer.send('ssh-connect', sessionId);
+    } else {
+      ipcRenderer.send('ssh-connect', { sessionId, ip, osType, username, password });
+    }
   },
-  sshDisconnect: () => ipcRenderer.send('ssh-disconnect'),
-  sshData: (data) => ipcRenderer.send('ssh-data', data),
-  sshResize: (cols, rows) => ipcRenderer.send('ssh-resize', { cols, rows }),
+  sshDisconnect: (sessionId) => ipcRenderer.send('ssh-disconnect', { sessionId }),
+  sshData: (sessionId, data) => {
+    if (typeof sessionId === 'object') {
+      ipcRenderer.send('ssh-data', sessionId);
+    } else {
+      ipcRenderer.send('ssh-data', { sessionId, data });
+    }
+  },
+  sshResize: (sessionId, cols, rows) => {
+    if (typeof sessionId === 'object') {
+      ipcRenderer.send('ssh-resize', sessionId);
+    } else {
+      ipcRenderer.send('ssh-resize', { sessionId, cols, rows });
+    }
+  },
   
   onSshState: (callback) => {
     const listener = (event, data) => callback(data);
@@ -59,6 +75,11 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (event, base64) => callback(base64);
     ipcRenderer.on('android-frame', listener);
     return () => ipcRenderer.removeListener('android-frame', listener);
+  },
+  onAndroidInputError: (callback) => {
+    const listener = (event, msg) => callback(msg);
+    ipcRenderer.on('android-input-error', listener);
+    return () => ipcRenderer.removeListener('android-input-error', listener);
   },
 
   minimizeWindow: () => ipcRenderer.send('window-minimize'),

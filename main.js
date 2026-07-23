@@ -34,8 +34,7 @@ function decryptConfig(base64Cipher) {
 }
 
 let mainWindow;
-let activeSshConn = null;
-let activeSshStream = null;
+const activeSshSessions = new Map(); // sessionId -> { conn, stream, ip }
 
 // Common MAC OUI prefixes mapped to vendors (Offline fallbacks)
 const OFFLINE_VENDORS = {
@@ -229,46 +228,114 @@ ipcMain.handle('launch-uninstaller', () => {
 
 // ── Embedded Android Mirror ────────────────────────────────────────────────
 let androidMirrorActive = false;
+let androidSerial = null;   // cached serial of the target device (for `-s`)
 
-// Helper: find ADB executable
-function findAdb() {
+// List serials of devices currently in the 'device' (ready) state.
+function listAdbDevices(adb) {
   try {
-    const result = execSync('where adb', { encoding: 'utf8', stdio: ['pipe','pipe','ignore'] }).trim().split('\n')[0];
-    if (result && result.trim()) return result.trim();
-  } catch {}
-  // Check winget paths
-  const wingetBase = path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages');
-  try {
-    const walk = (dir, depth = 0) => {
-      if (depth > 4) return null;
-      for (const f of fs.readdirSync(dir)) {
-        const full = path.join(dir, f);
-        if (f === 'adb.exe') return full;
-        try {
-          if (fs.statSync(full).isDirectory()) {
-            const found = walk(full, depth + 1);
-            if (found) return found;
-          }
-        } catch {}
-      }
-      return null;
-    };
-    const found = walk(wingetBase);
-    if (found) return found;
-  } catch {}
-  return 'adb'; // fallback
+    const out = execSync(`"${adb}" devices`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+    return out.split('\n').slice(1)                 // drop the "List of devices" header
+      .map(l => l.trim())
+      .filter(l => /\tdevice$/.test(l))             // only ready devices (skip offline/unauthorized)
+      .map(l => l.split('\t')[0]);
+  } catch { return []; }
 }
 
-// Helper: ensure ADB device is connected
+// Prefer a physical USB device (serial has no "host:port") over a wireless one:
+// USB is low-latency and stable, so input events (tap/swipe) are reliable.
+function pickBestSerial(devices) {
+  const usb = devices.find(s => !s.includes(':'));
+  return usb || devices[0] || null;
+}
+
+// Helper: find ADB executable (Cross-Platform: Windows, macOS, Linux)
+function findAdb() {
+  const isWin = process.platform === 'win32';
+  const whichCmd = isWin ? 'where adb' : 'which adb';
+
+  try {
+    const result = execSync(whichCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().split('\n')[0];
+    if (result && result.trim()) return result.trim();
+  } catch {}
+
+  if (isWin) {
+    const wingetBase = path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages');
+    try {
+      const walk = (dir, depth = 0) => {
+        if (depth > 4) return null;
+        for (const f of fs.readdirSync(dir)) {
+          const full = path.join(dir, f);
+          if (f === 'adb.exe') return full;
+          try {
+            if (fs.statSync(full).isDirectory()) {
+              const found = walk(full, depth + 1);
+              if (found) return found;
+            }
+          } catch {}
+        }
+        return null;
+      };
+      const found = walk(wingetBase);
+      if (found) return found;
+    } catch {}
+  } else {
+    const posixPaths = [
+      '/opt/homebrew/bin/adb',
+      '/usr/local/bin/adb',
+      '/usr/bin/adb',
+      path.join(os.homedir(), 'Library', 'Android', 'sdk', 'platform-tools', 'adb'),
+      path.join(os.homedir(), 'Android', 'Sdk', 'platform-tools', 'adb'),
+      path.join(os.homedir(), '.android-sdk', 'platform-tools', 'adb')
+    ];
+    for (const p of posixPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
+  return 'adb';
+}
+
+// Helper: ensure ADB device is connected, and cache the target serial.
 function ensureAdbConnected() {
   const adb = findAdb();
   try {
-    const devicesOutput = execSync(`"${adb}" devices`, { encoding: 'utf8', stdio: ['pipe','pipe','ignore'] });
-    if (!devicesOutput.includes('\tdevice')) {
-      // Auto-connect to 192.168.1.5:5555
-      execSync(`"${adb}" connect 192.168.1.5:5555`, { encoding: 'utf8', stdio: ['pipe','pipe','ignore'] });
+    let devices = listAdbDevices(adb);
+    if (devices.length === 0) {
+      // Nothing ready — try the known wireless endpoint, then re-list.
+      try { execSync(`"${adb}" connect 192.168.1.5:5555`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }); } catch {}
+      devices = listAdbDevices(adb);
     }
-  } catch(e) {}
+    // Prefer a USB device (stable, low-latency) over the wireless endpoint, so
+    // plugging in the cable automatically makes control reliable.
+    androidSerial = pickBestSerial(devices);
+  } catch { androidSerial = null; }
+}
+
+// Build the `-s <serial>` prefix so every command targets one specific device.
+// Without this, `adb shell` fails outright when more than one entry is listed.
+function adbTargetPrefix() {
+  if (!androidSerial) ensureAdbConnected();
+  return androidSerial ? `-s ${androidSerial} ` : '';
+}
+
+// Run an `adb shell input …` command; surface failures to the renderer so the
+// user can see *why* control isn't working instead of it silently doing nothing.
+function runAdbInput(rest) {
+  const adb = findAdb();
+  return new Promise(resolve => {
+    exec(`"${adb}" ${adbTargetPrefix()}${rest}`, { windowsHide: true }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = String(stderr || err.message || '').trim();
+        console.error('[adb input] failed:', rest, '→', msg);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('android-input-error', msg || 'adb command failed');
+        }
+        resolve({ success: false, error: msg });
+      } else {
+        resolve({ success: true });
+      }
+    });
+  });
 }
 
 // IPC: start embedded Android screen mirror (sends frames via IPC push)
@@ -285,7 +352,10 @@ ipcMain.handle('start-android-mirror', async () => {
   const captureFrame = () => {
     if (!androidMirrorActive) return;
     const chunks = [];
-    const proc = spawn(adb, ['exec-out', 'screencap', '-p'], { windowsHide: true });
+    const capArgs = androidSerial
+      ? ['-s', androidSerial, 'exec-out', 'screencap', '-p']
+      : ['exec-out', 'screencap', '-p'];
+    const proc = spawn(adb, capArgs, { windowsHide: true });
     proc.stdout.on('data', chunk => chunks.push(chunk));
     proc.on('close', code => {
       if (code === 0 && chunks.length > 0) {
@@ -313,32 +383,29 @@ ipcMain.handle('stop-android-mirror', () => {
 
 // IPC: send tap input to Android device
 ipcMain.handle('android-tap', (event, { deviceX, deviceY }) => {
-  const adb = findAdb();
-  exec(`"${adb}" shell input tap ${Math.round(deviceX)} ${Math.round(deviceY)}`, { windowsHide: true });
-  return { success: true };
+  return runAdbInput(`shell input tap ${Math.round(deviceX)} ${Math.round(deviceY)}`);
 });
 
 // IPC: send key event to Android device
 ipcMain.handle('android-key', (event, keycode) => {
-  const adb = findAdb();
-  exec(`"${adb}" shell input keyevent ${keycode}`, { windowsHide: true });
-  return { success: true };
+  return runAdbInput(`shell input keyevent ${parseInt(keycode, 10)}`);
 });
 
 // IPC: send swipe/drag input to Android device
 ipcMain.handle('android-swipe', (event, { x1, y1, x2, y2, duration = 300 }) => {
-  const adb = findAdb();
-  exec(`"${adb}" shell input swipe ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)} ${Math.round(duration)}`, { windowsHide: true });
-  return { success: true };
+  return runAdbInput(`shell input swipe ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)} ${Math.round(duration)}`);
 });
 
 // IPC: get Android device screen resolution
 ipcMain.handle('get-android-info', () => {
   return new Promise(resolve => {
     const adb = findAdb();
-    exec(`"${adb}" shell wm size`, { windowsHide: true }, (err, stdout) => {
+    exec(`"${adb}" ${adbTargetPrefix()}shell wm size`, { windowsHide: true }, (err, stdout) => {
       if (err || !stdout) { resolve(null); return; }
-      const m = stdout.match(/size:\s*(\d+)x(\d+)/i);
+      // Prefer the effective "Override size" over "Physical size" when present.
+      const m = stdout.match(/Override size:\s*(\d+)x(\d+)/i)
+             || stdout.match(/Physical size:\s*(\d+)x(\d+)/i)
+             || stdout.match(/size:\s*(\d+)x(\d+)/i);
       if (m) resolve({ width: parseInt(m[1]), height: parseInt(m[2]) });
       else resolve(null);
     });
@@ -346,12 +413,15 @@ ipcMain.handle('get-android-info', () => {
 });
 
 
-// Helper: ping a host cross-platform
+// Helper: ping a host cross-platform (Windows, macOS, Linux)
 function pingHost(ip) {
   return new Promise((resolve) => {
-    const cmd = process.platform === 'win32'
-      ? `ping -n 1 -w 200 ${ip}`
-      : `ping -c 1 -W 1 ${ip}`;
+    let cmd = `ping -c 1 -W 1 ${ip}`;
+    if (process.platform === 'win32') {
+      cmd = `ping -n 1 -w 200 ${ip}`;
+    } else if (process.platform === 'darwin') {
+      cmd = `ping -c 1 -t 1 ${ip}`;
+    }
     exec(cmd, (err) => {
       resolve(!err);
     });
@@ -393,7 +463,7 @@ async function isHostActive(ip) {
   return false;
 }
 
-// Helper: run cross-platform arp -a and parse results
+// Helper: run cross-platform arp -a and parse results (Windows, macOS, Linux)
 function getArpTable() {
   return new Promise((resolve) => {
     exec('arp -a', (err, stdout) => {
@@ -405,14 +475,15 @@ function getArpTable() {
       
       const lines = stdout.split('\n');
       const ipRegex = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/;
-      const macRegex = /([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}/;
+      const macRegex = /([0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2}/;
 
       for (const line of lines) {
         const ipMatch = line.match(ipRegex);
         const macMatch = line.match(macRegex);
         if (ipMatch && macMatch) {
           const ip = ipMatch[0];
-          const mac = macMatch[0].toUpperCase().replace(/-/g, ':');
+          const rawMac = macMatch[0];
+          const mac = rawMac.split(/[:-]/).map(part => part.padStart(2, '0')).join(':').toUpperCase();
           arpMap[ip] = mac;
         }
       }
@@ -603,70 +674,62 @@ ipcMain.on('scan-network', async (event) => {
   }
 });
 
-// SSH Core Connection Handlers
-ipcMain.on('ssh-connect', (event, { ip, osType, username, password }) => {
-  // If connection is already open, close it first
-  if (activeSshConn) {
-    try {
-      activeSshConn.end();
-    } catch (e) {}
-    activeSshConn = null;
-    activeSshStream = null;
+// ── Multi-Session Keyed SSH Core ──────────────────────────────────────────────
+ipcMain.on('ssh-connect', (event, { sessionId, ip, osType, username, password }) => {
+  const targetSessionId = sessionId || `session_${ip}`;
+
+  if (activeSshSessions.has(targetSessionId)) {
+    const existing = activeSshSessions.get(targetSessionId);
+    try { existing.conn.end(); } catch (e) {}
+    activeSshSessions.delete(targetSessionId);
   }
 
   const conn = new Client();
-  activeSshConn = conn;
+  const sessionEntry = { conn, stream: null, ip };
+  activeSshSessions.set(targetSessionId, sessionEntry);
 
-  event.reply('ssh-state', { state: 'connecting', ip });
+  event.reply('ssh-state', { sessionId: targetSessionId, state: 'connecting', ip });
 
   conn.on('ready', () => {
-    event.reply('ssh-state', { state: 'connected', ip });
-    
+    event.reply('ssh-state', { sessionId: targetSessionId, state: 'connected', ip });
+
     conn.shell({ term: 'xterm-color', cols: 80, rows: 24 }, (err, stream) => {
       if (err) {
-        event.reply('ssh-state', { state: 'error', error: `Shell creation failed: ${err.message}` });
+        event.reply('ssh-state', { sessionId: targetSessionId, state: 'error', error: `Shell creation failed: ${err.message}` });
         conn.end();
+        activeSshSessions.delete(targetSessionId);
         return;
       }
-      activeSshStream = stream;
+      sessionEntry.stream = stream;
 
       stream.on('data', (data) => {
-        event.reply('ssh-output', data.toString());
+        event.reply('ssh-output', { sessionId: targetSessionId, data: data.toString() });
       });
 
       stream.on('close', () => {
         conn.end();
-        // Only notify the UI / clear shared state if this connection is still
-        // the active one — a newer ssh-connect call may have already replaced
-        // it, and a stale 'disconnected' would clobber the new session's UI.
-        if (activeSshConn === conn) {
-          event.reply('ssh-state', { state: 'disconnected' });
-          activeSshConn = null;
-          activeSshStream = null;
+        if (activeSshSessions.get(targetSessionId)?.conn === conn) {
+          event.reply('ssh-state', { sessionId: targetSessionId, state: 'disconnected' });
+          activeSshSessions.delete(targetSessionId);
         }
       });
     });
   });
 
   conn.on('error', (err) => {
-    // Ignore errors from a connection that has already been superseded by a
-    // newer ssh-connect call, so they don't overwrite the new session's state.
-    if (activeSshConn === conn) {
-      event.reply('ssh-state', { state: 'error', error: err.message });
-      activeSshConn = null;
-      activeSshStream = null;
+    if (activeSshSessions.get(targetSessionId)?.conn === conn) {
+      event.reply('ssh-state', { sessionId: targetSessionId, state: 'error', error: err.message });
+      activeSshSessions.delete(targetSessionId);
     }
   });
 
   conn.on('end', () => {
-    if (activeSshConn === conn) {
-      event.reply('ssh-state', { state: 'disconnected' });
-      activeSshConn = null;
-      activeSshStream = null;
+    if (activeSshSessions.get(targetSessionId)?.conn === conn) {
+      event.reply('ssh-state', { sessionId: targetSessionId, state: 'disconnected' });
+      activeSshSessions.delete(targetSessionId);
     }
   });
 
-  // Attempt connection with parameters
   try {
     conn.connect({
       host: ip,
@@ -677,34 +740,36 @@ ipcMain.on('ssh-connect', (event, { ip, osType, username, password }) => {
       keepaliveInterval: 5000
     });
   } catch (err) {
-    event.reply('ssh-state', { state: 'error', error: err.message });
-    if (activeSshConn === conn) {
-      activeSshConn = null;
-      activeSshStream = null;
-    }
+    event.reply('ssh-state', { sessionId: targetSessionId, state: 'error', error: err.message });
+    activeSshSessions.delete(targetSessionId);
   }
 });
 
 // IPC: write input characters to active SSH shell stream
-ipcMain.on('ssh-data', (event, data) => {
-  if (activeSshStream) {
-    activeSshStream.write(data);
+ipcMain.on('ssh-data', (event, payload) => {
+  const sessionId = typeof payload === 'object' ? payload.sessionId : null;
+  const data = typeof payload === 'object' ? payload.data : payload;
+  const sessionEntry = activeSshSessions.get(sessionId) || Array.from(activeSshSessions.values())[0];
+  if (sessionEntry && sessionEntry.stream) {
+    sessionEntry.stream.write(data);
   }
 });
 
 // IPC: resize remote shell window
-ipcMain.on('ssh-resize', (event, { cols, rows }) => {
-  if (activeSshStream) {
-    activeSshStream.setWindow(rows, cols, 480, 640);
+ipcMain.on('ssh-resize', (event, { sessionId, cols, rows }) => {
+  const sessionEntry = activeSshSessions.get(sessionId) || Array.from(activeSshSessions.values())[0];
+  if (sessionEntry && sessionEntry.stream) {
+    sessionEntry.stream.setWindow(rows, cols, 480, 640);
   }
 });
 
 // IPC: manual disconnect
-ipcMain.on('ssh-disconnect', () => {
-  if (activeSshConn) {
-    activeSshConn.end();
-    activeSshConn = null;
-    activeSshStream = null;
+ipcMain.on('ssh-disconnect', (event, payload) => {
+  const sessionId = typeof payload === 'string' ? payload : payload?.sessionId;
+  if (sessionId && activeSshSessions.has(sessionId)) {
+    const sessionEntry = activeSshSessions.get(sessionId);
+    try { sessionEntry.conn.end(); } catch (e) {}
+    activeSshSessions.delete(sessionId);
   }
 });
 
