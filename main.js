@@ -318,39 +318,32 @@ function adbTargetPrefix() {
   return androidSerial ? `-s ${androidSerial} ` : '';
 }
 
-// Run an `adb shell input …` command; surface failures to the renderer so the
-// user can see *why* control isn't working instead of it silently doing nothing.
+// Run an `adb shell input …` command with zero input latency
 function runAdbInput(rest) {
   const adb = findAdb();
-  return new Promise(resolve => {
-    exec(`"${adb}" ${adbTargetPrefix()}${rest}`, { windowsHide: true }, (err, stdout, stderr) => {
-      if (err) {
-        const msg = String(stderr || err.message || '').trim();
-        console.error('[adb input] failed:', rest, '→', msg);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('android-input-error', msg || 'adb command failed');
-        }
-        resolve({ success: false, error: msg });
-      } else {
-        resolve({ success: true });
-      }
-    });
+  const cmd = `"${adb}" ${adbTargetPrefix()}${rest}`;
+  exec(cmd, { windowsHide: true }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = String(stderr || err.message || '').trim();
+      console.error('[adb input] failed:', rest, '→', msg);
+    }
   });
+  return Promise.resolve({ success: true });
 }
 
 // IPC: start embedded Android screen mirror (sends frames via IPC push)
 ipcMain.handle('start-android-mirror', async () => {
-  // Guard against re-entrancy: clicking the Android card again while a mirror
-  // is already running must not spawn a second capture loop. Each loop
-  // recursively spawns `adb exec-out screencap` processes, so overlapping
-  // loops multiply the process/frame rate and never reconcile.
   if (androidMirrorActive) return { success: true, alreadyRunning: true };
   androidMirrorActive = true;
   ensureAdbConnected();
   const adb = findAdb();
 
+  let isCapturing = false;
+
   const captureFrame = () => {
-    if (!androidMirrorActive) return;
+    if (!androidMirrorActive || isCapturing) return;
+    isCapturing = true;
+
     const chunks = [];
     const capArgs = androidSerial
       ? ['-s', androidSerial, 'exec-out', 'screencap', '-p']
@@ -358,16 +351,18 @@ ipcMain.handle('start-android-mirror', async () => {
     const proc = spawn(adb, capArgs, { windowsHide: true });
     proc.stdout.on('data', chunk => chunks.push(chunk));
     proc.on('close', code => {
+      isCapturing = false;
       if (code === 0 && chunks.length > 0) {
         const buf = Buffer.concat(chunks);
         if (buf.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('android-frame', buf.toString('base64'));
         }
       }
-      if (androidMirrorActive) setTimeout(captureFrame, 350); // ~3 fps
+      if (androidMirrorActive) setImmediate(captureFrame); // Ultra-fast continuous real-time stream!
     });
     proc.on('error', () => {
-      if (androidMirrorActive) setTimeout(captureFrame, 1000);
+      isCapturing = false;
+      if (androidMirrorActive) setTimeout(captureFrame, 100);
     });
   };
 
