@@ -242,99 +242,125 @@ async function main() {
     console.log(`Success: Created Git Tag ${tag}`);
   } catch(e) {}
 
-  // ── Step 1: Local Windows + Linux Build ──────────────────────────────────────
-  console.log('\n[1/4] Building Windows & Linux Production Binaries Locally...');
+  // ── Step 1: Local Windows Build ─────────────────────────────────────────────
+  console.log('\n[1/4] Building Windows Production Binaries Locally...');
   try {
-    execSync('npx electron-builder --win --linux', { stdio: 'inherit', cwd: __dirname });
-    console.log('Success: Local Windows and Linux binaries built!');
+    execSync('npx electron-builder --win', { stdio: 'inherit', cwd: __dirname });
+    console.log('Success: Local Windows binaries built!');
   } catch (e) {
-    console.error('Error building Windows/Linux packages:', e.message);
+    console.error('Error building Windows package:', e.message);
   }
 
   // ── Step 2: Remote macOS Build ──────────────────────────────────────────────
+  const macIps = ['192.168.1.15', '192.168.1.5'];
+  let macConn = null;
+  let activeMacIp = null;
   console.log('\n[2/4] Connecting to MacBook via SSH for macOS Build...');
-  try {
-    const macConn = await connectSsh('192.168.1.5', config.ssh.mac.username, config.ssh.mac.pass);
-    console.log('Success: SSH connected to MacBook!');
+  for (const ip of macIps) {
+    try {
+      macConn = await connectSsh(ip, config.ssh.mac.username, config.ssh.mac.pass);
+      activeMacIp = ip;
+      console.log(`Success: SSH connected to MacBook at ${ip}!`);
+      break;
+    } catch(e) {}
+  }
 
-    const macRemoteDir = `/tmp/omnishell-build-mac-${Date.now()}`;
-    console.log(`Status: Syncing project source to MacBook at ${macRemoteDir}...`);
+  if (macConn) {
+    try {
+      const macRemoteDir = `/tmp/omnishell-build-mac-${Date.now()}`;
+      console.log(`Status: Syncing project source to MacBook at ${macRemoteDir}...`);
 
-    await new Promise((resolve, reject) => {
-      macConn.sftp((err, sftp) => {
-        if (err) return reject(err);
-        sftpUploadDir(sftp, __dirname, macRemoteDir).then(() => resolve(sftp)).catch(reject);
+      await new Promise((resolve, reject) => {
+        macConn.sftp((err, sftp) => {
+          if (err) return reject(err);
+          sftpUploadDir(sftp, __dirname, macRemoteDir).then(() => resolve(sftp)).catch(reject);
+        });
       });
-    });
 
-    console.log('Status: Executing macOS electron-builder on MacBook...');
-    await sshRunCommand(macConn, `cd "${macRemoteDir}" && npm install && npx electron-builder --mac`);
-    console.log('Success: macOS binaries compiled on MacBook!');
+      console.log('Status: Executing macOS electron-builder on MacBook...');
+      await sshRunCommand(macConn, `cd "${macRemoteDir}" && npm install && npx electron-builder --mac`);
+      console.log('Success: macOS binaries compiled on MacBook!');
 
-    // Download macOS DMG and ZIP
-    console.log('Status: Downloading macOS binaries from MacBook to local dist/...');
-    await new Promise((resolve) => {
-      macConn.sftp(async (err, sftp) => {
-        if (err) { resolve(); return; }
-        try {
-          const remoteDmg = `${macRemoteDir}/dist/OmniShell-${version}.dmg`;
-          const remoteZip = `${macRemoteDir}/dist/OmniShell-${version}-mac.zip`;
-          const localDmg  = path.join(localDistDir, `OmniShell-${version}.dmg`);
-          const localZip  = path.join(localDistDir, `OmniShell-${version}-mac.zip`);
+      // Download macOS DMG and ZIP
+      console.log('Status: Downloading macOS binaries from MacBook to local dist/...');
+      await new Promise((resolve) => {
+        macConn.sftp(async (err, sftp) => {
+          if (err) { resolve(); return; }
+          try {
+            const remoteDmg = `${macRemoteDir}/dist/OmniShell-${version}.dmg`;
+            const remoteZip = `${macRemoteDir}/dist/OmniShell-${version}-mac.zip`;
+            const localDmg  = path.join(localDistDir, `OmniShell-${version}.dmg`);
+            const localZip  = path.join(localDistDir, `OmniShell-${version}-mac.zip`);
 
-          try { await sftpDownload(sftp, remoteDmg, localDmg); console.log(`Downloaded: ${localDmg}`); } catch(e){}
-          try { await sftpDownload(sftp, remoteZip, localZip); console.log(`Downloaded: ${localZip}`); } catch(e){}
-        } catch(e){}
-        resolve();
+            try { await sftpDownload(sftp, remoteDmg, localDmg); console.log(`Downloaded: ${localDmg}`); } catch(e){}
+            try { await sftpDownload(sftp, remoteZip, localZip); console.log(`Downloaded: ${localZip}`); } catch(e){}
+          } catch(e){}
+          resolve();
+        });
       });
-    });
 
-    macConn.end();
-  } catch (e) {
-    console.warn(`[macOS Remote Build Skipped/Offline]: ${e.message}`);
+      macConn.end();
+    } catch (e) {
+      console.warn(`[macOS Remote Build Error]: ${e.message}`);
+    }
+  } else {
+    console.warn('[macOS Remote Build Skipped]: Could not connect to MacBook via SSH');
   }
 
   // ── Step 3: Remote Linux Build ──────────────────────────────────────────────
-  console.log('\n[3/4] Connecting to Linux Device (192.168.1.10) via SSH for Linux Build...');
-  try {
-    const linuxConn = await connectSsh('192.168.1.10', config.ssh.linux.username, config.ssh.linux.pass);
-    console.log('Success: SSH connected to Linux Device!');
+  const linuxIps = ['192.168.1.17', '192.168.1.10'];
+  let linuxConn = null;
+  let activeLinuxIp = null;
+  console.log('\n[3/4] Connecting to Linux Device via SSH for Linux Build...');
+  for (const ip of linuxIps) {
+    try {
+      linuxConn = await connectSsh(ip, config.ssh.linux.username, config.ssh.linux.pass);
+      activeLinuxIp = ip;
+      console.log(`Success: SSH connected to Linux Device at ${ip}!`);
+      break;
+    } catch(e) {}
+  }
 
-    const linuxRemoteDir = `/tmp/omnishell-build-linux-${Date.now()}`;
-    console.log(`Status: Syncing project source to Linux Device at ${linuxRemoteDir}...`);
+  if (linuxConn) {
+    try {
+      const linuxRemoteDir = `/tmp/omnishell-build-linux-${Date.now()}`;
+      console.log(`Status: Syncing project source to Linux Device at ${linuxRemoteDir}...`);
 
-    await new Promise((resolve, reject) => {
-      linuxConn.sftp((err, sftp) => {
-        if (err) return reject(err);
-        sftpUploadDir(sftp, __dirname, linuxRemoteDir).then(() => resolve(sftp)).catch(reject);
+      await new Promise((resolve, reject) => {
+        linuxConn.sftp((err, sftp) => {
+          if (err) return reject(err);
+          sftpUploadDir(sftp, __dirname, linuxRemoteDir).then(() => resolve(sftp)).catch(reject);
+        });
       });
-    });
 
-    console.log('Status: Executing Linux electron-builder on Linux device...');
-    await sshRunCommand(linuxConn, `cd "${linuxRemoteDir}" && npm install && npx electron-builder --linux`);
-    console.log('Success: Linux binaries compiled on Linux device!');
+      console.log('Status: Executing Linux electron-builder on Linux device...');
+      await sshRunCommand(linuxConn, `cd "${linuxRemoteDir}" && npm install && npx electron-builder --linux`);
+      console.log('Success: Linux binaries compiled on Linux device!');
 
-    // Download Linux AppImage and DEB
-    console.log('Status: Downloading Linux binaries to local dist/...');
-    await new Promise((resolve) => {
-      linuxConn.sftp(async (err, sftp) => {
-        if (err) { resolve(); return; }
-        try {
-          const remoteAppImage = `${linuxRemoteDir}/dist/OmniShell-${version}.AppImage`;
-          const remoteDeb      = `${linuxRemoteDir}/dist/omnishell_${version}_amd64.deb`;
-          const localAppImage  = path.join(localDistDir, `OmniShell-${version}.AppImage`);
-          const localDeb       = path.join(localDistDir, `omnishell_${version}_amd64.deb`);
+      // Download Linux AppImage and DEB
+      console.log('Status: Downloading Linux binaries to local dist/...');
+      await new Promise((resolve) => {
+        linuxConn.sftp(async (err, sftp) => {
+          if (err) { resolve(); return; }
+          try {
+            const remoteAppImage = `${linuxRemoteDir}/dist/OmniShell-${version}.AppImage`;
+            const remoteDeb      = `${linuxRemoteDir}/dist/omnishell_${version}_amd64.deb`;
+            const localAppImage  = path.join(localDistDir, `OmniShell-${version}.AppImage`);
+            const localDeb       = path.join(localDistDir, `omnishell_${version}_amd64.deb`);
 
-          try { await sftpDownload(sftp, remoteAppImage, localAppImage); console.log(`Downloaded: ${localAppImage}`); } catch(e){}
-          try { await sftpDownload(sftp, remoteDeb, localDeb); console.log(`Downloaded: ${localDeb}`); } catch(e){}
-        } catch(e){}
-        resolve();
+            try { await sftpDownload(sftp, remoteAppImage, localAppImage); console.log(`Downloaded: ${localAppImage}`); } catch(e){}
+            try { await sftpDownload(sftp, remoteDeb, localDeb); console.log(`Downloaded: ${localDeb}`); } catch(e){}
+          } catch(e){}
+          resolve();
+        });
       });
-    });
 
-    linuxConn.end();
-  } catch (e) {
-    console.warn(`[Linux Remote Build Skipped/Offline]: ${e.message}`);
+      linuxConn.end();
+    } catch (e) {
+      console.warn(`[Linux Remote Build Error]: ${e.message}`);
+    }
+  } else {
+    console.warn('[Linux Remote Build Skipped]: Could not connect to Linux device via SSH');
   }
 
   // ── Step 4: Publish GitHub Release with Multi-Platform Binaries ────────────
