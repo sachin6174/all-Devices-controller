@@ -290,24 +290,22 @@ async function main() {
       await new Promise((resolve) => {
         macConn.sftp((err, sftp) => {
           if (err) { resolve(); return; }
-          sftp.readdir(`${macRemoteDir}/dist`, async (rErr, files) => {
-            if (!rErr && files) {
-              const downloadPromises = [];
-              for (const f of files) {
-                const fn = f.filename;
-                if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage')) {
-                  const remoteF = `${macRemoteDir}/dist/${fn}`;
-                  const localF  = path.join(localDistDir, fn);
-                  downloadPromises.push(
-                    sftpDownload(sftp, remoteF, localF)
-                      .then(() => console.log(`Success: Downloaded ${fn}`))
-                      .catch(e => console.warn(`Download error for ${fn}:`, e.message))
-                  );
-                }
+          sftp.readdir(`${macRemoteDir}/dist`, (rErr, files) => {
+            if (rErr || !files || files.length === 0) { resolve(); return; }
+            const downloadPromises = [];
+            for (const f of files) {
+              const fn = f.filename;
+              if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage')) {
+                const remoteF = `${macRemoteDir}/dist/${fn}`;
+                const localF  = path.join(localDistDir, fn);
+                downloadPromises.push(
+                  sftpDownload(sftp, remoteF, localF)
+                    .then(() => console.log(`Success: Downloaded ${fn}`))
+                    .catch(e => console.warn(`Download error for ${fn}:`, e.message))
+                );
               }
-              await Promise.all(downloadPromises);
             }
-            resolve();
+            Promise.all(downloadPromises).then(() => resolve()).catch(() => resolve());
           });
         });
       });
