@@ -43,7 +43,8 @@
         "mac": {
             "target": [
                 "dmg",
-                "zip"
+                "zip",
+                "pkg"
             ],
             "category": "public.app-category.utilities",
             "hardenedRuntime": true,

@@ -47,15 +47,18 @@ try {
   process.exit(1);
 }
 
-// ── Extract ONLY the required fields ─────────────────────────────────────────
+// ── Extract ONLY the personal required fields ─────────────────────────────────────────
+const macCreds   = fullConfig?.ssh?.macPersonal   || fullConfig?.ssh?.mac   || null;
+const linuxCreds = fullConfig?.ssh?.linuxPersonal || fullConfig?.ssh?.linux || null;
+const winCreds   = fullConfig?.ssh?.windowsPersonal || fullConfig?.ssh?.windows || null;
+
 const slimConfig = {
   ssh: {
-    mac:     fullConfig?.ssh?.mac     ? { username: fullConfig.ssh.mac.username,     pass: fullConfig.ssh.mac.pass     } : null,
-    linux:   fullConfig?.ssh?.linux   ? { username: fullConfig.ssh.linux.username,   pass: fullConfig.ssh.linux.pass   } : null,
-    windows: fullConfig?.ssh?.windows ? { username: fullConfig.ssh.windows.username, pass: fullConfig.ssh.windows.pass } : null,
+    mac:     macCreds   ? { username: macCreds.username,   pass: macCreds.pass   } : null,
+    linux:   linuxCreds ? { username: linuxCreds.username, pass: linuxCreds.pass } : null,
+    windows: winCreds   ? { username: winCreds.username,   pass: winCreds.pass   } : null,
   },
   router: fullConfig?.router ? { username: fullConfig.router.username, password: fullConfig.router.password } : null
-  // NOTE: github_token intentionally excluded — stays on dev machine only
 };
 
 console.log('--------------------------------------------------');

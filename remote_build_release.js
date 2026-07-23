@@ -23,10 +23,13 @@ const tag = `v${version}`;
 const repo = 'sachin6174/all-Devices-controller';
 const githubToken = config.github_token;
 
+const macCreds   = (config.ssh && (config.ssh.macPersonal   || config.ssh.mac))   || { username: 'sachinkumar', pass: '1111' };
+const linuxCreds = (config.ssh && (config.ssh.linuxPersonal || config.ssh.linux)) || { username: 'test', pass: 'test' };
+
 console.log(`Target Version: ${tag}`);
 console.log(`GitHub Repository: ${repo}`);
-console.log(`Mac Credentials: ${config.ssh.mac.username}@192.168.1.5`);
-console.log(`Linux Credentials: ${config.ssh.linux.username}@192.168.1.10`);
+console.log(`Mac Credentials: ${macCreds.username}@192.168.1.15`);
+console.log(`Linux Credentials: ${linuxCreds.username}@192.168.1.17`);
 console.log('--------------------------------------------------');
 
 // Helper: Run remote SSH command with PATH environment resolution
@@ -261,7 +264,7 @@ async function main() {
   console.log('\n[2/4] Connecting to MacBook via SSH for macOS Build...');
   for (const ip of macIps) {
     try {
-      macConn = await connectSsh(ip, config.ssh.mac.username, config.ssh.mac.pass);
+      macConn = await connectSsh(ip, macCreds.username, macCreds.pass);
       activeMacIp = ip;
       console.log(`Success: SSH connected to MacBook at ${ip}!`);
       break;
@@ -281,7 +284,7 @@ async function main() {
       });
 
       console.log('Status: Executing Apple-Signed & Notarized macOS & Linux build on MacBook...');
-      const macCmd = `security unlock-keychain -p "${config.ssh.mac.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null; cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux; echo "Submitting build to Apple Notarization Service..."; dmg_file=$(find "${macRemoteDir}/dist" -name "*.dmg" | head -n 1); if [ -n "$dmg_file" ] && [ -f "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" ]; then xcrun notarytool submit "$dmg_file" --key "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" --key-id 7V2V2Y7758 --issuer 3208f1a5-5bce-4845-ae7c-d717abe01c20 --wait || true; xcrun stapler staple "$dmg_file" 2>/dev/null || true; fi`;
+      const macCmd = `security unlock-keychain -p "${macCreds.pass}" ~/Library/Keychains/login.keychain-db 2>/dev/null; cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux; echo "Submitting build to Apple Notarization Service..."; dmg_file=$(find "${macRemoteDir}/dist" -name "*.dmg" | head -n 1); if [ -n "$dmg_file" ] && [ -f "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" ]; then xcrun notarytool submit "$dmg_file" --key "/Users/sachinkumar/private_keys/AuthKey_7V2V2Y7758.p8" --key-id 7V2V2Y7758 --issuer 3208f1a5-5bce-4845-ae7c-d717abe01c20 --wait || true; xcrun stapler staple "$dmg_file" 2>/dev/null || true; fi`;
       await sshRunCommand(macConn, macCmd);
       console.log('Success: Apple-Signed, Notarized, and Stapled macOS & Linux binaries compiled on MacBook!');
 
@@ -295,7 +298,7 @@ async function main() {
             const downloadPromises = [];
             for (const f of files) {
               const fn = f.filename;
-              if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage')) {
+              if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage') || fn.endsWith('.pkg')) {
                 const remoteF = `${macRemoteDir}/dist/${fn}`;
                 const localF  = path.join(localDistDir, fn);
                 downloadPromises.push(
@@ -325,7 +328,7 @@ async function main() {
   console.log('\n[3/4] Checking dedicated Linux Device via SSH...');
   for (const ip of linuxIps) {
     try {
-      linuxConn = await connectSsh(ip, config.ssh.linux.username, config.ssh.linux.pass);
+      linuxConn = await connectSsh(ip, linuxCreds.username, linuxCreds.pass);
       activeLinuxIp = ip;
       console.log(`Success: SSH connected to Linux Device at ${ip}!`);
       break;
@@ -386,7 +389,7 @@ async function main() {
     .filter(f => {
       const lower = f.toLowerCase();
       return f.includes(version)
-        && (lower.endsWith('.exe') || lower.endsWith('.zip') || lower.endsWith('.dmg') || lower.endsWith('.appimage') || lower.endsWith('.deb'))
+        && (lower.endsWith('.exe') || lower.endsWith('.zip') || lower.endsWith('.dmg') || lower.endsWith('.appimage') || lower.endsWith('.deb') || lower.endsWith('.pkg'))
         && !lower.endsWith('.blockmap')
         && fs.statSync(path.join(localDistDir, f)).isFile();
     })
