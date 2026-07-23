@@ -1,6 +1,6 @@
 {
     "name": "omnishell",
-    "version": "2.4.0",
+    "version": "2.5.0",
     "description": "Cross-platform network device scanner and remote SSH controller.",
     "main": "main.js",
     "scripts": {
@@ -69,6 +69,6 @@
     },
     "devDependencies": {
         "electron": "^31.7.7",
-        "electron-builder": "^26.15.3"
+        "electron-builder": "24.13.3"
     }
 }

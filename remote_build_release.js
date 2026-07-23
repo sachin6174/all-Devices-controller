@@ -280,41 +280,49 @@ async function main() {
         });
       });
 
-      console.log('Status: Executing macOS electron-builder on MacBook...');
-      await sshRunCommand(macConn, `cd "${macRemoteDir}" && npm install && npx electron-builder --mac`);
-      console.log('Success: macOS binaries compiled on MacBook!');
+      console.log('Status: Executing macOS & Linux electron-builder on MacBook...');
+      await sshRunCommand(macConn, `cd "${macRemoteDir}" && npm install && npx electron-builder --mac --linux`);
+      console.log('Success: macOS and Linux binaries compiled on MacBook!');
 
-      // Download macOS DMG and ZIP
-      console.log('Status: Downloading macOS binaries from MacBook to local dist/...');
+      // Download all compiled binaries from MacBook to local dist/
+      console.log('Status: Downloading compiled binaries from MacBook to local dist/...');
       await new Promise((resolve) => {
-        macConn.sftp(async (err, sftp) => {
+        macConn.sftp((err, sftp) => {
           if (err) { resolve(); return; }
-          try {
-            const remoteDmg = `${macRemoteDir}/dist/OmniShell-${version}.dmg`;
-            const remoteZip = `${macRemoteDir}/dist/OmniShell-${version}-mac.zip`;
-            const localDmg  = path.join(localDistDir, `OmniShell-${version}.dmg`);
-            const localZip  = path.join(localDistDir, `OmniShell-${version}-mac.zip`);
-
-            try { await sftpDownload(sftp, remoteDmg, localDmg); console.log(`Downloaded: ${localDmg}`); } catch(e){}
-            try { await sftpDownload(sftp, remoteZip, localZip); console.log(`Downloaded: ${localZip}`); } catch(e){}
-          } catch(e){}
-          resolve();
+          sftp.readdir(`${macRemoteDir}/dist`, async (rErr, files) => {
+            if (!rErr && files) {
+              for (const f of files) {
+                const fn = f.filename;
+                if (fn.endsWith('.dmg') || fn.endsWith('.zip') || fn.endsWith('.deb') || fn.endsWith('.AppImage')) {
+                  const remoteF = `${macRemoteDir}/dist/${fn}`;
+                  const localF  = path.join(localDistDir, fn);
+                  try {
+                    await sftpDownload(sftp, remoteF, localF);
+                    console.log(`Success: Downloaded ${fn}`);
+                  } catch(e) {
+                    console.warn(`Download skipped for ${fn}:`, e.message);
+                  }
+                }
+              }
+            }
+            resolve();
+          });
         });
       });
 
       macConn.end();
     } catch (e) {
-      console.warn(`[macOS Remote Build Error]: ${e.message}`);
+      console.warn(`[macOS/Linux Remote Build Error]: ${e.message}`);
     }
   } else {
     console.warn('[macOS Remote Build Skipped]: Could not connect to MacBook via SSH');
   }
 
-  // ── Step 3: Remote Linux Build ──────────────────────────────────────────────
+  // ── Step 3: Linux Device Build (if dedicated Linux device available) ──────
   const linuxIps = ['192.168.1.17', '192.168.1.10'];
   let linuxConn = null;
   let activeLinuxIp = null;
-  console.log('\n[3/4] Connecting to Linux Device via SSH for Linux Build...');
+  console.log('\n[3/4] Checking dedicated Linux Device via SSH...');
   for (const ip of linuxIps) {
     try {
       linuxConn = await connectSsh(ip, config.ssh.linux.username, config.ssh.linux.pass);
@@ -343,41 +351,46 @@ async function main() {
       // Download Linux AppImage and DEB
       console.log('Status: Downloading Linux binaries to local dist/...');
       await new Promise((resolve) => {
-        linuxConn.sftp(async (err, sftp) => {
+        linuxConn.sftp((err, sftp) => {
           if (err) { resolve(); return; }
-          try {
-            const remoteAppImage = `${linuxRemoteDir}/dist/OmniShell-${version}.AppImage`;
-            const remoteDeb      = `${linuxRemoteDir}/dist/omnishell_${version}_amd64.deb`;
-            const localAppImage  = path.join(localDistDir, `OmniShell-${version}.AppImage`);
-            const localDeb       = path.join(localDistDir, `omnishell_${version}_amd64.deb`);
-
-            try { await sftpDownload(sftp, remoteAppImage, localAppImage); console.log(`Downloaded: ${localAppImage}`); } catch(e){}
-            try { await sftpDownload(sftp, remoteDeb, localDeb); console.log(`Downloaded: ${localDeb}`); } catch(e){}
-          } catch(e){}
-          resolve();
+          sftp.readdir(`${linuxRemoteDir}/dist`, async (rErr, files) => {
+            if (!rErr && files) {
+              for (const f of files) {
+                const fn = f.filename;
+                if (fn.endsWith('.AppImage') || fn.endsWith('.deb') || fn.endsWith('.zip')) {
+                  const remoteF = `${linuxRemoteDir}/dist/${fn}`;
+                  const localF  = path.join(localDistDir, fn);
+                  try {
+                    await sftpDownload(sftp, remoteF, localF);
+                    console.log(`Success: Downloaded ${fn}`);
+                  } catch(e) {}
+                }
+              }
+            }
+            resolve();
+          });
         });
       });
 
       linuxConn.end();
     } catch (e) {
-      console.warn(`[Linux Remote Build Error]: ${e.message}`);
+      console.warn(`[Linux Remote Build Note]: ${e.message}`);
     }
   } else {
-    console.warn('[Linux Remote Build Skipped]: Could not connect to Linux device via SSH');
+    console.log('[Linux Dedicated Build Note]: Using MacBook cross-compiled Linux packages');
   }
 
   // ── Step 4: Publish GitHub Release with Multi-Platform Binaries ────────────
   console.log('\n[4/4] Collecting All Multi-Platform Artifacts for GitHub Release...');
-  const assetCandidates = [
-    path.join(localDistDir, `OmniShell Setup ${version}.exe`),
-    path.join(localDistDir, `OmniShell-${version}-win.zip`),
-    path.join(localDistDir, `OmniShell-${version}.dmg`),
-    path.join(localDistDir, `OmniShell-${version}-mac.zip`),
-    path.join(localDistDir, `OmniShell-${version}.AppImage`),
-    path.join(localDistDir, `omnishell_${version}_amd64.deb`)
-  ];
+  const existingAssets = fs.readdirSync(localDistDir)
+    .filter(f => {
+      const lower = f.toLowerCase();
+      return (lower.endsWith('.exe') || lower.endsWith('.zip') || lower.endsWith('.dmg') || lower.endsWith('.appimage') || lower.endsWith('.deb'))
+        && !lower.endsWith('.blockmap')
+        && fs.statSync(path.join(localDistDir, f)).isFile();
+    })
+    .map(f => path.join(localDistDir, f));
 
-  const existingAssets = assetCandidates.filter(f => fs.existsSync(f));
   console.log(`Found ${existingAssets.length} production assets:`, existingAssets.map(f => path.basename(f)));
 
   if (githubToken) {
