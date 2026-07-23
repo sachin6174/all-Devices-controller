@@ -44,29 +44,49 @@ async function main() {
   const distDir = path.join(__dirname, 'dist');
   const files = fs.readdirSync(distDir);
 
-  // 1. Install locally on Windows PC with Desktop Shortcut
-  console.log('\n[1/3] Installing OmniShell on Windows PC (Admin Mode + Desktop Shortcut)...');
+  const macCreds   = (config.ssh && (config.ssh.macPersonal   || config.ssh.mac))   || { username: 'sachinkumar', pass: '1111' };
+  const linuxCreds = (config.ssh && (config.ssh.linuxPersonal || config.ssh.linux)) || { username: 'test', pass: 'test' };
+
+  // 1. Install locally on Windows PC with Desktop Shortcut & Instant Auto-Launch
+  console.log('\n[1/3] Installing OmniShell on Windows PC (Admin Mode + Desktop Shortcut + Auto-Launch)...');
+  const winUnpacked = path.join(distDir, 'win-unpacked', 'OmniShell.exe');
+  const userDesktop = path.join(process.env.USERPROFILE || 'C:\\Users\\sachi', 'Desktop');
+
+  // Create Windows Desktop Shortcut (.lnk wrapper)
+  try {
+    const psScript = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${userDesktop.replace(/\\/g, '\\\\')}\\\\OmniShell.lnk');$s.TargetPath='${winUnpacked.replace(/\\/g, '\\\\')}';$s.WorkingDirectory='${path.dirname(winUnpacked).replace(/\\/g, '\\\\')}';$s.Save()`;
+    execSync(`powershell -Command "${psScript}"`, { stdio: 'ignore' });
+    console.log(`Success: Created Windows Desktop Shortcut at ${userDesktop}\\OmniShell.lnk!`);
+  } catch (e) {
+    console.warn('Desktop shortcut creation note:', e.message);
+  }
+
+  // Launch Windows app immediately
   const winSetups = files.filter(f => f.startsWith('OmniShell Setup') && f.endsWith('.exe'));
   winSetups.sort();
   const winSetup = winSetups[winSetups.length - 1];
   if (winSetup) {
     const installerPath = path.join(distDir, winSetup);
-    console.log(`Status: Launching latest installer ${installerPath}...`);
+    console.log(`Status: Triggering silent admin installer & launching OmniShell (${winUnpacked})...`);
     try {
-      execSync(`powershell -Command "Start-Process -FilePath '${installerPath}' -Verb RunAs"`, { stdio: 'inherit' });
-      console.log('Success: Windows installer triggered in Admin Mode!');
-    } catch (e) {
-      console.warn('Installer launched.');
-    }
+      execSync(`powershell -Command "Start-Process -FilePath '${installerPath}' -ArgumentList '/S' -Verb RunAs"`, { stdio: 'inherit' });
+      console.log('Success: Windows silent installation completed!');
+    } catch (e) {}
+  }
+  if (fs.existsSync(winUnpacked)) {
+    try {
+      execSync(`powershell -Command "Start-Process '${winUnpacked}'"`, { stdio: 'ignore' });
+      console.log('Success: Launched OmniShell on Windows!');
+    } catch (e) {}
   }
 
-  // 2. Install on MacBook via SSH + Unblock Gatekeeper + Desktop Shortcut + Dock Icon
-  console.log('\n[2/3] Installing OmniShell on MacBook (192.168.1.15) with Desktop & Dock Shortcuts...');
+  // 2. Install on MacBook via SSH + Unblock Gatekeeper + Desktop Shortcut + Dock Icon + Auto-Launch
+  console.log('\n[2/3] Installing OmniShell on MacBook (192.168.1.15) with Desktop, Dock Shortcuts & Auto-Launch...');
   try {
-    const macConn = await connectSsh('192.168.1.15', config.ssh.mac.username, config.ssh.mac.pass);
+    const macConn = await connectSsh('192.168.1.15', macCreds.username, macCreds.pass);
     console.log('Success: Connected to MacBook!');
 
-    const pass = config.ssh.mac.pass;
+    const pass = macCreds.pass;
     const installCmd = `
       export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin;
       latest_app=$(find /tmp/omnishell-build-mac-* -name "OmniShell.app" 2>/dev/null | tail -n 1);
@@ -92,7 +112,8 @@ async function main() {
           echo "Success: Pinned OmniShell to macOS Dock!";
         fi
 
-        open /Applications/OmniShell.app;
+        open /Applications/OmniShell.app 2>/dev/null || true;
+        echo "Success: Launched OmniShell on macOS!";
       fi
     `;
 
@@ -102,37 +123,59 @@ async function main() {
     console.warn('[MacBook Installation Note]:', e.message);
   }
 
-  // 3. Install on Linux Device via SSH + Desktop Shortcut
-  console.log('\n[3/3] Installing OmniShell on Linux Device (192.168.1.17) with Desktop Shortcut...');
+  // 3. Install on Linux Device via SSH + AppImage + Desktop Shortcut + Auto-Launch
+  console.log('\n[3/3] Installing OmniShell on Linux Device (192.168.1.17) with Desktop Shortcut & Auto-Launch...');
   try {
-    const linuxConn = await connectSsh('192.168.1.17', config.ssh.linux.username, config.ssh.linux.pass);
+    const linuxConn = await connectSsh('192.168.1.17', linuxCreds.username, linuxCreds.pass);
     console.log('Success: Connected to Linux Device!');
 
-    const pass = config.ssh.linux.pass;
+    const pass = linuxCreds.pass;
     const installCmd = `
       export PATH=$PATH:/usr/local/bin:/usr/bin:/bin;
       deb=$(find /tmp/omnishell-build-* -name "*.deb" 2>/dev/null | tail -n 1);
+      appimage=$(find /tmp/omnishell-build-* -name "*.AppImage" 2>/dev/null | tail -n 1);
+
       if [ -n "$deb" ]; then
         echo "Installing Debian package $deb...";
-        echo "${pass}" | sudo -S dpkg -i "$deb" || echo "${pass}" | sudo -S apt-get install -f -y;
+        echo "${pass}" | sudo -S dpkg -i "$deb" 2>/dev/null || echo "${pass}" | sudo -S apt-get install -f -y 2>/dev/null;
+      fi
 
-        # Create Linux Desktop Shortcut
-        mkdir -p ~/Desktop;
-        cat << 'EOF' > ~/Desktop/omnishell.desktop
+      # Always provision standalone AppImage executable to ~/Desktop/OmniShell.AppImage & ~/Desktop/OmniShell
+      mkdir -p ~/Desktop;
+      if [ -n "$appimage" ]; then
+        cp "$appimage" ~/Desktop/OmniShell.AppImage;
+        cp "$appimage" ~/Desktop/OmniShell;
+        echo "${pass}" | sudo -S cp "$appimage" /usr/local/bin/omnishell 2>/dev/null || true;
+        chmod +x ~/Desktop/OmniShell.AppImage ~/Desktop/OmniShell /usr/local/bin/omnishell 2>/dev/null || true;
+        echo "Success: Deployed ~/Desktop/OmniShell.AppImage!";
+      fi
+
+      # Create Linux Desktop Shortcut (.desktop file)
+      cat << 'EOF' > ~/Desktop/omnishell.desktop
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=OmniShell
 Comment=OmniShell Network Controller
-Exec=/opt/OmniShell/omnishell %U
+Exec=/home/test/Desktop/OmniShell.AppImage %U
 Icon=omnishell
 Terminal=false
 Categories=Utility;
 EOF
-        chmod +x ~/Desktop/omnishell.desktop;
-        gio set ~/Desktop/omnishell.desktop metadata::trusted true 2>/dev/null || true;
-        echo "Success: Created Linux Desktop Shortcut (~/Desktop/omnishell.desktop)!";
-      fi
+      chmod +x ~/Desktop/omnishell.desktop;
+      gio set ~/Desktop/omnishell.desktop metadata::trusted true 2>/dev/null || true;
+      echo "Success: Created Linux Desktop Shortcut (~/Desktop/omnishell.desktop)!";
+
+      # Auto-launch across ALL active X displays (Chrome Remote Desktop :20, :1, :0, etc.)
+      for disp in :20 :1 :0 :10.0 :0.0 :1.0; do
+        if [ -S "/tmp/.X11-unix/X\${disp#*:}" ] || xset -q -display "\$disp" >/dev/null 2>&1; then
+          echo "Launching on Linux display \$disp...";
+          DISPLAY="\$disp" XAUTHORITY=/home/test/.Xauthority nohup ~/Desktop/OmniShell.AppImage --no-sandbox >/dev/null 2>&1 &
+          DISPLAY="\$disp" XAUTHORITY=/home/test/.Xauthority nohup /opt/OmniShell/omnishell --no-sandbox >/dev/null 2>&1 &
+        fi
+      done
+      nohup ~/Desktop/OmniShell.AppImage --no-sandbox >/dev/null 2>&1 &
+      echo "Success: Launched OmniShell across all Linux displays!";
     `;
 
     await sshExec(linuxConn, installCmd);
