@@ -40,6 +40,17 @@ function sshExec(conn, cmd) {
   });
 }
 
+// Helper: SFTP Upload single file
+function sftpUploadFile(conn, localPath, remotePath) {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(localPath)) { resolve(); return; }
+    conn.sftp((err, sftp) => {
+      if (err) { resolve(); return; }
+      sftp.fastPut(localPath, remotePath, () => resolve());
+    });
+  });
+}
+
 async function main() {
   const distDir = path.join(__dirname, 'dist');
   const files = fs.readdirSync(distDir);
@@ -84,7 +95,9 @@ async function main() {
   console.log('\n[2/3] Installing OmniShell on MacBook (192.168.1.15) with Desktop, Dock Shortcuts & Auto-Launch...');
   try {
     const macConn = await connectSsh('192.168.1.15', macCreds.username, macCreds.pass);
-    console.log('Success: Connected to MacBook!');
+    const localCfg = path.join(__dirname, 'sachin-person.cfg');
+    await sftpUploadFile(macConn, localCfg, '/Users/sachinkumar/sachin-person.cfg');
+    await sftpUploadFile(macConn, localCfg, '/Applications/OmniShell.app/Contents/Resources/sachin-person.cfg');
 
     const pass = macCreds.pass;
     const installCmd = `
@@ -94,6 +107,7 @@ async function main() {
         echo "Installing $latest_app to /Applications/OmniShell.app...";
         echo "${pass}" | sudo -S rm -rf /Applications/OmniShell.app;
         echo "${pass}" | sudo -S cp -R "$latest_app" /Applications/;
+        echo "${pass}" | sudo -S cp "${localCfg}" /Applications/OmniShell.app/Contents/Resources/sachin-person.cfg 2>/dev/null || true;
         
         # Unblock Gatekeeper completely
         echo "${pass}" | sudo -S xattr -dr com.apple.quarantine /Applications/OmniShell.app 2>/dev/null || true;
@@ -128,6 +142,7 @@ async function main() {
   try {
     const linuxConn = await connectSsh('192.168.1.17', linuxCreds.username, linuxCreds.pass);
     console.log('Success: Connected to Linux Device!');
+    await sftpUploadFile(linuxConn, localCfg, '/home/test/sachin-person.cfg');
 
     const pass = linuxCreds.pass;
     const installCmd = `

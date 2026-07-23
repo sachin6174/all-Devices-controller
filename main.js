@@ -150,10 +150,13 @@ app.on('window-all-closed', () => {
 
 // Helper: load config — prefers encrypted .cfg, falls back to plaintext .config
 function loadConfigData() {
+  const homeDir = os.homedir();
   // Encrypted .cfg search paths (preferred — shipped with app)
   const encryptedPaths = [
+    path.join(homeDir, 'sachin-person.cfg'),
+    path.join(homeDir, 'Desktop', 'sachin-person.cfg'),
     path.join(path.dirname(process.execPath), 'sachin-person.cfg'),
-    path.join(os.homedir(), 'sachin-person.cfg'),
+    path.join(path.dirname(process.execPath), '..', 'Resources', 'sachin-person.cfg'),
     path.join(__dirname, 'sachin-person.cfg')
   ];
 
@@ -174,8 +177,10 @@ function loadConfigData() {
 
   // Fallback: plaintext .config (dev mode only)
   const plaintextPaths = [
+    path.join(homeDir, 'sachin-person.config'),
+    path.join(homeDir, 'Desktop', 'sachin-person.config'),
     path.join(path.dirname(process.execPath), 'sachin-person.config'),
-    path.join(os.homedir(), 'sachin-person.config'),
+    path.join(path.dirname(process.execPath), '..', 'Resources', 'sachin-person.config'),
     path.join(__dirname, 'sachin-person.config')
   ];
 
@@ -348,22 +353,32 @@ ipcMain.handle('start-android-mirror', async () => {
     const capArgs = androidSerial
       ? ['-s', androidSerial, 'exec-out', 'screencap', '-p']
       : ['exec-out', 'screencap', '-p'];
-    const proc = spawn(adb, capArgs, { windowsHide: true });
-    proc.stdout.on('data', chunk => chunks.push(chunk));
-    proc.on('close', code => {
-      isCapturing = false;
-      if (code === 0 && chunks.length > 0) {
-        const buf = Buffer.concat(chunks);
-        if (buf.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('android-frame', buf.toString('base64'));
-        }
+    try {
+      const proc = spawn(adb, capArgs, { windowsHide: true });
+      if (!proc || !proc.stdout) {
+        isCapturing = false;
+        if (androidMirrorActive) setTimeout(captureFrame, 200);
+        return;
       }
-      if (androidMirrorActive) setImmediate(captureFrame); // Ultra-fast continuous real-time stream!
-    });
-    proc.on('error', () => {
+      proc.stdout.on('data', chunk => chunks.push(chunk));
+      proc.on('close', code => {
+        isCapturing = false;
+        if (code === 0 && chunks.length > 0) {
+          const buf = Buffer.concat(chunks);
+          if (buf.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('android-frame', buf.toString('base64'));
+          }
+        }
+        if (androidMirrorActive) setImmediate(captureFrame);
+      });
+      proc.on('error', () => {
+        isCapturing = false;
+        if (androidMirrorActive) setTimeout(captureFrame, 200);
+      });
+    } catch (e) {
       isCapturing = false;
-      if (androidMirrorActive) setTimeout(captureFrame, 100);
-    });
+      if (androidMirrorActive) setTimeout(captureFrame, 200);
+    }
   };
 
   captureFrame();
